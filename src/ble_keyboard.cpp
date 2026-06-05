@@ -38,8 +38,9 @@ namespace {
 
 class KbdServerCallbacks : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) override {
-        // pedir parámetros de conexión amables con la coexistencia WiFi+BLE
-        server->updateConnParams(connInfo.getConnHandle(), 12, 24, 0, 400);
+        // OJO: no pedir updateConnParams acá — un update de parámetros en
+        // pleno pairing hace fallar la conexión con Windows. El host HID
+        // negocia sus propios parámetros.
         bleKeyboard.setConnected(true);
     }
     void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) override {
@@ -84,8 +85,10 @@ void BleKeyboardOut::begin(const char* deviceName)
     NimBLEDevice::init(deviceName);
     NimBLEDevice::setPower(6);   // dBm (la sobrecarga int8_t; el enum del IDF
                                  // tiene otros valores numéricos en el C3)
-    // HID requiere encriptación: bonding + Secure Connections, Just Works
-    NimBLEDevice::setSecurityAuth(true, false, true);
+    // HID requiere encriptación: bonding + Just Works LEGACY (sc=false).
+    // Con Secure Connections algunas pilas (Windows/Android viejos) fallan
+    // el pairing con dispositivos NoInputNoOutput.
+    NimBLEDevice::setSecurityAuth(true, false, false);
     NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
 
     NimBLEServer* server = NimBLEDevice::createServer();
@@ -109,6 +112,11 @@ void BleKeyboardOut::begin(const char* deviceName)
     adv->start();
 
     _started = true;
+}
+
+void BleKeyboardOut::clearBonds()
+{
+    if (_started) NimBLEDevice::deleteAllBonds();
 }
 
 void BleKeyboardOut::sendKey(uint8_t keycode)

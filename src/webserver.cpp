@@ -304,6 +304,10 @@ static void onWsEvent(AsyncWebSocket*, AsyncWebSocketClient* client,
 void wsBroadcastReading(const CaliperReading& r, float displayedMm, bool relActive)
 {
     if (ws.count() == 0) return;
+    // Si algún cliente tiene la cola llena, saltear: con WiFi en power-save
+    // (coexistencia BLE) la radio drena lento y encolar de más genera un
+    // backlog de segundos. Mejor perder un frame viejo que mostrar atraso.
+    if (!ws.availableForWriteAll()) return;
     char buf[96];
     snprintf(buf, sizeof(buf),
              "{\"t\":\"r\",\"v\":%.3f,\"u\":%d,\"on\":true,\"rel\":%s}",
@@ -322,6 +326,7 @@ void wsBroadcastCapture(float displayedMm)
 void wsBroadcastStatus()
 {
     if (ws.count() == 0) return;
+    if (!ws.availableForWriteAll()) return;   // ver wsBroadcastReading
     char buf[96];
     snprintf(buf, sizeof(buf),
              "{\"t\":\"st\",\"ble\":%s,\"mode\":%d,\"rel\":%s,\"on\":%s}",

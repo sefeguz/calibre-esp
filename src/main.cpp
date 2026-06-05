@@ -79,6 +79,13 @@ static void serialLoop()
         if (appCapture()) wsBroadcastCapture(appDisplayedMm());
     }
     else if (cmd == "zero") { appToggleRelative(); wsBroadcastStatus(); }
+    else if (cmd == "blereset") {
+        // borra los emparejamientos guardados (bonds viejos rotos hacen
+        // fallar reconexiones); también hay que "olvidar" el dispositivo
+        // del lado de la PC/celular y emparejar de nuevo
+        bleKeyboard.clearBonds();
+        Serial.println("[ble] bonds borrados; olvidar el dispositivo en el host y re-emparejar");
+    }
     else if (cmd == "pins") {
         // Test de cableado: el pull-up interno (~45k) revela si la línea está
         // abierta (sube a ~VDD) o conectada a un nodo que la sujeta abajo.
@@ -144,7 +151,7 @@ static void serialLoop()
         caliper.begin(m, settings.invert);
     }
     else if (cmd.length()) {
-        Serial.println("comandos: start | stop | status | redetect | capture | zero | pins | scope");
+        Serial.println("comandos: start | stop | status | redetect | capture | zero | pins | scope | blereset");
     }
 }
 
@@ -203,7 +210,19 @@ void loop()
     CaliperReading r;
     if (caliper.poll(r)) {
         float disp = appDisplayedMm();
-        wsBroadcastReading(r, disp, appRelativeActive());
+
+        // Throttle del WS: solo cambios (máx ~5/s) + heartbeat de 1 s.
+        // Encolar las ~11 lecturas/s satura la cola del WS con el WiFi en
+        // power-save y la UI termina mostrando datos con segundos de atraso.
+        static float lastSentMm = -99999.0f;
+        static uint32_t lastSentAt = 0;
+        uint32_t nowMs = millis();
+        bool changed = fabsf(disp - lastSentMm) >= 0.005f;
+        if ((changed && nowMs - lastSentAt >= 150) || nowMs - lastSentAt >= 1000) {
+            wsBroadcastReading(r, disp, appRelativeActive());
+            lastSentMm = disp;
+            lastSentAt = nowMs;
+        }
         if (serialStream) {
             Serial.printf("{\"mm\":%.3f,\"counts\":%ld,\"unit\":\"%s\",\"ts\":%lu}\n",
                           disp, (long)r.counts,

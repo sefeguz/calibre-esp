@@ -28,6 +28,9 @@ public:
     // decimals según unidad (mm: 2, inch: 4). sep: ',' o '.'.
     bool typeMeasurement(float value, uint8_t decimals, char sep, EolKey eol);
 
+    // Borra los emparejamientos guardados (bonds rotos impiden reconectar).
+    void clearBonds();
+
     // uso interno (callbacks NimBLE)
     void setConnected(bool c) { _connected = c; if (!c) _subscribed = false; }
     void setSubscribed(bool s) { _subscribed = s; }
