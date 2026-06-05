@@ -24,13 +24,17 @@ de izquierda a derecha): **GND, DATA, CLK, VCC**.
 Calibre (puerto SPC)          ESP32-C3
 ---------------------         -----------------
 GND  ──────────────────────── GND
-DATA ──────────────────────── GPIO0
-CLK  ──────────────────────── GPIO1
+CLK  ──────────────────────── GPIO0
+DATA ──────────────────────── GPIO1
 VCC  ── (NO conectar: el calibre usa su propia pila)
 
 Botón ── entre GPIO3 y GND (se activa INPUT_PULLUP interno)
 LED   ── GPIO8 (ya viene en la placa C3 SuperMini)
 ```
+
+> Probado en hardware real (Hamilton CR2032): señal de 1.5 V → modo ADC
+> automático, clock ~3.2 kHz, ~96% de frames OK con WiFi+BLE activos.
+> Si DATA/CLK quedan al revés, ajustar `PIN_CALIPER_*` en `include/config.h`.
 
 > **Importante — verificá el nivel de señal primero.** Que el calibre use pila
 > de 3 V **no garantiza** que las señales DATA/CLK lleguen a 3 V: muchos

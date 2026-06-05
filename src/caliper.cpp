@@ -4,6 +4,30 @@
 #include <esp_timer.h>
 #include <driver/gpio.h>
 
+// El driver oneshot del ADC no tolera lecturas concurrentes (detectTask/adcTask
+// vs diag() desde otra tarea): falla con "adc oneshot read fail" y devuelve 0.
+// Serializar todas las lecturas con un mutex.
+static SemaphoreHandle_t s_adcMutex = nullptr;
+
+static uint32_t adcReadMv(uint8_t pin)
+{
+    if (s_adcMutex) xSemaphoreTake(s_adcMutex, portMAX_DELAY);
+    uint32_t mv = analogReadMilliVolts(pin);
+    if (s_adcMutex) xSemaphoreGive(s_adcMutex);
+    return mv;
+}
+
+// Lectura cruda (sin calibración): ~50 µs vs ~70-100 µs de la calibrada.
+// Imprescindible en el camino caliente: las fases del clock del calibre
+// bajan a ~100 µs y con la lectura lenta se pierden fases enteras.
+static int adcReadRaw(uint8_t pin)
+{
+    if (s_adcMutex) xSemaphoreTake(s_adcMutex, portMAX_DELAY);
+    int v = analogRead(pin);
+    if (s_adcMutex) xSemaphoreGive(s_adcMutex);
+    return v;
+}
+
 // ---------------------------------------------------------------------------
 // ISR modo digital — ANYEDGE en CLK, igual que jkent/esp32-caliper: el bit de
 // DATA se acumula SOLO cuando CLK queda ALTO tras el flanco (= flanco
@@ -22,8 +46,8 @@ void IRAM_ATTR Caliper::clkIsr(void* arg)
     Caliper* self = static_cast<Caliper*>(arg);
     int64_t now = esp_timer_get_time();
 
-    int clk = gpio_get_level((gpio_num_t)PIN_CALIPER_CLK);
-    int data = gpio_get_level((gpio_num_t)PIN_CALIPER_DATA);
+    int clk = gpio_get_level((gpio_num_t)self->_pinClk);
+    int data = gpio_get_level((gpio_num_t)self->_pinData);
     if (self->_invert) { clk = !clk; data = !data; }
 
     if (self->_isrBits > 0 && now - self->_isrLastEdgeUs > CALIPER_BIT_GAP_US) {
@@ -56,13 +80,13 @@ void IRAM_ATTR Caliper::clkIsr(void* arg)
 // ---------------------------------------------------------------------------
 int Caliper::adcReadBit(uint32_t bitDeadlineMs)
 {
-    while (analogReadMilliVolts(PIN_CALIPER_CLK) > CALIPER_ADC_THRESH_MV) {
+    while (adcReadRaw(_pinClk) > CALIPER_ADC_THRESH_RAW) {
         if (millis() > bitDeadlineMs) return -1;
     }
-    while (analogReadMilliVolts(PIN_CALIPER_CLK) < CALIPER_ADC_THRESH_MV) {
+    while (adcReadRaw(_pinClk) < CALIPER_ADC_THRESH_RAW) {
         if (millis() > bitDeadlineMs) return -1;
     }
-    return analogReadMilliVolts(PIN_CALIPER_DATA) > CALIPER_ADC_THRESH_MV ? 1 : 0;
+    return adcReadRaw(_pinData) > CALIPER_ADC_THRESH_RAW ? 1 : 0;
 }
 
 void Caliper::adcTask(void* arg)
@@ -84,15 +108,19 @@ void Caliper::adcTask(void* arg)
         uint32_t packetDeadline = millis() + 300;
 
         while (millis() < packetDeadline) {
-            int bit = adcReadBit(millis() + 30);
+            int bit = self->adcReadBit(millis() + 30);
             if (bit < 0) {            // gap/timeout: frame trunco, reintentar
+                self->adcBitTimeouts = self->adcBitTimeouts + 1;
                 bitIndex = 0;
                 packet = 0;
                 continue;
             }
             packet |= ((uint32_t)bit) << bitIndex;
-            if (++bitIndex == CALIPER_PACKET_BITS) { ok = true; break; }
+            bitIndex++;
+            if (bitIndex > self->adcMaxBits) self->adcMaxBits = bitIndex;
+            if (bitIndex == CALIPER_PACKET_BITS) { ok = true; break; }
         }
+        self->adcWindows = self->adcWindows + 1;
 
         if (ok) {
             Frame f = { packet, CALIPER_PACKET_BITS };
@@ -112,45 +140,72 @@ void Caliper::adcTask(void* arg)
 }
 
 // ---------------------------------------------------------------------------
-// Auto-detección: primero flancos digitales (señal 3 V) en una ventana mayor
-// al gap entre paquetes (~100-300 ms); si no hay, actividad analógica (1.5 V).
+// Auto-detección de modo Y de pines. Algunos calibres traen DATA/CLK en orden
+// inverso en el conector: se identifica el CLK real porque SIEMPRE conmuta más
+// que DATA (48 flancos por paquete contra ≤25).
+//  1) flancos digitales en cada línea (señal 3 V) -> modo DIGITAL
+//  2) cruces de umbral por ADC en ambas líneas (señal 1.5 V) -> modo ADC
 // Reintenta hasta encontrar señal (el calibre puede estar apagado).
 // ---------------------------------------------------------------------------
 static volatile uint32_t s_detectEdges = 0;
 
-void IRAM_ATTR Caliper::detectIsr(void*) { s_detectEdges = s_detectEdges + 1; }
+static void IRAM_ATTR detectEdgeIsr(void*) { s_detectEdges = s_detectEdges + 1; }
+
+// cuenta flancos digitales en un pin durante windowMs
+static uint32_t countDigitalEdges(uint8_t pin, uint32_t windowMs)
+{
+    s_detectEdges = 0;
+    gpio_set_intr_type((gpio_num_t)pin, GPIO_INTR_ANYEDGE);
+    gpio_isr_handler_add((gpio_num_t)pin, detectEdgeIsr, nullptr);
+    vTaskDelay(pdMS_TO_TICKS(windowMs));
+    gpio_isr_handler_remove((gpio_num_t)pin);
+    return s_detectEdges;
+}
+
+// cuenta cruces del umbral ADC en ambos pines (lecturas intercaladas)
+static void countAdcCrossings(uint8_t pinA, uint8_t pinB, uint32_t windowMs,
+                              uint32_t& crossA, uint32_t& crossB)
+{
+    crossA = crossB = 0;
+    bool lastA = adcReadRaw(pinA) > CALIPER_ADC_THRESH_RAW;
+    bool lastB = adcReadRaw(pinB) > CALIPER_ADC_THRESH_RAW;
+    uint32_t deadline = millis() + windowMs;
+    uint32_t lastYield = millis();
+    while (millis() < deadline) {
+        bool a = adcReadRaw(pinA) > CALIPER_ADC_THRESH_RAW;
+        bool b = adcReadRaw(pinB) > CALIPER_ADC_THRESH_RAW;
+        if (a != lastA) { crossA++; lastA = a; }
+        if (b != lastB) { crossB++; lastB = b; }
+        if (millis() - lastYield > 40) { lastYield = millis(); vTaskDelay(1); }
+    }
+}
 
 void Caliper::detectTask(void* arg)
 {
     Caliper* self = static_cast<Caliper*>(arg);
 
     for (;;) {
-        // 1) ¿flancos digitales? (señal llega al VIH ~2.47 V)
-        s_detectEdges = 0;
-        gpio_set_intr_type((gpio_num_t)PIN_CALIPER_CLK, GPIO_INTR_ANYEDGE);
-        gpio_isr_handler_add((gpio_num_t)PIN_CALIPER_CLK, detectIsr, nullptr);
-        vTaskDelay(pdMS_TO_TICKS(CALIPER_DETECT_MS));
-        gpio_isr_handler_remove((gpio_num_t)PIN_CALIPER_CLK);
+        // 1) ¿flancos digitales en CLK? (señal llega al VIH ~2.47 V)
+        uint32_t edges = countDigitalEdges(PIN_CALIPER_CLK, CALIPER_DETECT_MS);
+        Serial.printf("[detect] flancos digitales CLK(GPIO%d)=%lu\n",
+                      PIN_CALIPER_CLK, (unsigned long)edges);
 
-        if (s_detectEdges >= 2 * CALIPER_PACKET_BITS - 8) {  // ~1 frame (2 flancos/bit)
+        if (edges >= 2 * CALIPER_PACKET_BITS - 8) {   // ~1 frame (2 flancos/bit)
             self->_detectTaskHandle = nullptr;
             self->startDigital();
             vTaskDelete(nullptr);
             return;
         }
 
-        // 2) ¿actividad analógica? (señal de ~1.5 V)
-        uint32_t deadline = millis() + CALIPER_DETECT_MS;
-        uint32_t maxMv = 0, minMv = UINT32_MAX;
-        while (millis() < deadline) {
-            uint32_t mv = analogReadMilliVolts(PIN_CALIPER_CLK);
-            if (mv > maxMv) maxMv = mv;
-            if (mv < minMv) minMv = mv;
-            if ((deadline - millis()) % 50 == 0) vTaskDelay(1);  // ceder CPU
-        }
-        // CLK reposa alto y pulsa a bajo: hay señal si el nivel alto supera el
-        // umbral y se vieron transiciones (min bien por debajo del max)
-        if (maxMv > CALIPER_ADC_THRESH_MV && minMv < CALIPER_ADC_THRESH_MV / 2) {
+        // 2) ¿actividad analógica en CLK? (señal de ~1.5 V)
+        uint32_t c1, c2;
+        countAdcCrossings(PIN_CALIPER_CLK, PIN_CALIPER_DATA,
+                          2 * CALIPER_DETECT_MS, c1, c2);
+        Serial.printf("[detect] cruces ADC: CLK(GPIO%d)=%lu DATA(GPIO%d)=%lu\n",
+                      PIN_CALIPER_CLK, (unsigned long)c1,
+                      PIN_CALIPER_DATA, (unsigned long)c2);
+
+        if (c1 >= 24) {   // tráfico en CLK (al menos un paquete visto)
             self->_detectTaskHandle = nullptr;
             self->startAdc();
             vTaskDelete(nullptr);
@@ -170,12 +225,18 @@ void Caliper::begin(CaliperMode forceMode, bool invert)
     pinMode(PIN_CALIPER_CLK, INPUT);
     analogReadResolution(12);
     analogSetAttenuation(ADC_11db);  // rango ~0-2.5 V calibrado, cubre 1.5 V
+    if (!s_adcMutex) s_adcMutex = xSemaphoreCreateMutex();
 
     // Servicio de ISR GPIO en IRAM: sobrevive a escrituras de flash (NVS/OTA).
-    // ESP_ERR_INVALID_STATE = ya instalado, OK.
-    esp_err_t err = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        log_e("gpio_install_isr_service: %d", err);
+    // Instalar una sola vez (re-begin tras redetect/pins no debe reinstalar).
+    static bool isrServiceInstalled = false;
+    if (!isrServiceInstalled) {
+        esp_err_t err = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
+        if (err == ESP_OK || err == ESP_ERR_INVALID_STATE) {
+            isrServiceInstalled = true;
+        } else {
+            log_e("gpio_install_isr_service: %d", err);
+        }
     }
 
     if (!_queue) _queue = xQueueCreate(8, sizeof(Frame));
@@ -183,6 +244,8 @@ void Caliper::begin(CaliperMode forceMode, bool invert)
     _invert = invert;
     _mode = CaliperMode::DETECTING;
     _on = false;
+    _pinClk = PIN_CALIPER_CLK;    // la auto-detección puede intercambiarlos
+    _pinData = PIN_CALIPER_DATA;
 
     switch (forceMode) {
         case CaliperMode::DIGITAL: startDigital(); break;
@@ -200,8 +263,8 @@ void Caliper::startDigital()
     _isrShift = 0;
     _isrLastEdgeUs = 0;
     _mode = CaliperMode::DIGITAL;
-    gpio_set_intr_type((gpio_num_t)PIN_CALIPER_CLK, GPIO_INTR_ANYEDGE);
-    gpio_isr_handler_add((gpio_num_t)PIN_CALIPER_CLK, clkIsr, this);
+    gpio_set_intr_type((gpio_num_t)_pinClk, GPIO_INTR_ANYEDGE);
+    gpio_isr_handler_add((gpio_num_t)_pinClk, clkIsr, this);
     _isrAttached = true;
 }
 
@@ -210,13 +273,13 @@ void Caliper::startAdc()
     stopReaders();
     _mode = CaliperMode::ADC;
     _lastAdcFrameMs = 0;
-    xTaskCreate(adcTask, "cal_adc", 3072, this, 2, &_adcTaskHandle);
+    xTaskCreate(adcTask, "cal_adc", 3072, this, CALIPER_ADC_TASK_PRIO, &_adcTaskHandle);
 }
 
 void Caliper::stopReaders()
 {
     if (_isrAttached) {
-        gpio_isr_handler_remove((gpio_num_t)PIN_CALIPER_CLK);
+        gpio_isr_handler_remove((gpio_num_t)_pinClk);
         _isrAttached = false;
     }
     if (_adcTaskHandle) { vTaskDelete(_adcTaskHandle); _adcTaskHandle = nullptr; }
@@ -354,8 +417,8 @@ CaliperDiag Caliper::diag()
     d.lastFrameRaw = _lastFrameRaw;
     portEXIT_CRITICAL(&_mux);
     // niveles instantáneos (fuera del mux: el ADC bloquea) — con suerte CLK
-    // se ve en reposo (alto)
-    d.clkMv = analogReadMilliVolts(PIN_CALIPER_CLK);
-    d.dataMv = analogReadMilliVolts(PIN_CALIPER_DATA);
+    // se ve en reposo (alto). Usa el mapeo de pines ya detectado.
+    d.clkMv = adcReadMv(_pinClk);
+    d.dataMv = adcReadMv(_pinData);
     return d;
 }

@@ -24,6 +24,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include "config.h"
 
 enum class CaliperMode : uint8_t {
     DETECTING = 0,  // buscando señal
@@ -72,11 +73,14 @@ public:
     void redetect();          // pide re-detección; poll() la aplica (thread-safe)
     CaliperDiag diag();       // estado para web/serial (lee ADC bajo demanda)
 
+    uint8_t pinClk() const { return _pinClk; }
+    uint8_t pinData() const { return _pinData; }
+    bool    pinsSwapped() const { return _pinClk != PIN_CALIPER_CLK; }
+
 private:
     struct Frame { uint64_t bits; uint8_t count; };
 
     static void IRAM_ATTR clkIsr(void* arg);
-    static void IRAM_ATTR detectIsr(void* arg);
     static void adcTask(void* arg);
     static void detectTask(void* arg);
 
@@ -85,7 +89,7 @@ private:
     void stopReaders();
     bool handleFrame(const Frame& f, CaliperReading& out);
     bool decode24(uint32_t packet, CaliperReading& out);
-    static int adcReadBit(uint32_t bitDeadlineMs);
+    int  adcReadBit(uint32_t bitDeadlineMs);
 
     // estado ISR (modo digital)
     volatile uint64_t _isrShift = 0;
@@ -102,6 +106,10 @@ private:
     CaliperMode _mode = CaliperMode::DETECTING;
     CaliperMode _forceMode = CaliperMode::DETECTING;
     bool _invert = false;
+    // Algunos calibres traen el conector con DATA y CLK al revés: la
+    // auto-detección identifica el CLK real (el que más conmuta) y ajusta.
+    uint8_t _pinClk = PIN_CALIPER_CLK;
+    uint8_t _pinData = PIN_CALIPER_DATA;
     volatile bool _on = false;
     volatile bool _redetectRequested = false;
     bool _hasReading = false;
@@ -113,4 +121,10 @@ private:
     volatile uint32_t _framesBad = 0;
     volatile uint8_t  _lastFrameBits = 0;
     volatile uint64_t _lastFrameRaw = 0;
+
+public:
+    // instrumentación del modo ADC (debug de bring-up)
+    volatile uint8_t  adcMaxBits = 0;    // máximo de bits juntados en un intento
+    volatile uint32_t adcBitTimeouts = 0;
+    volatile uint32_t adcWindows = 0;    // ventanas de caza completadas
 };

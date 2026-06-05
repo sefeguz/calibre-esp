@@ -36,8 +36,12 @@ Solo **3 cables**. VCC del calibre queda sin conectar (sigue con su pila).
 | Calibre | ESP32-C3 | Nota |
 |---|---|---|
 | GND | GND | referencia común — obligatorio |
-| DATA | GPIO0 | entrada flotante (el firmware no activa pull-up) |
-| CLK | GPIO1 | entrada flotante |
+| CLK | GPIO0 | entrada flotante (el firmware no activa pull-up) |
+| DATA | GPIO1 | entrada flotante |
+
+> Verificado en el Hamilton real (2026-06): señal de **1.5 V** (modo ADC
+> automático), clock lento ~3.2 kHz, BIN6 24 bits — funciona sin componentes
+> extra. ~96% de frames decodificados con WiFi+BLE activos.
 
 Más el botón de captura:
 

@@ -63,18 +63,88 @@ static void serialLoop()
     else if (cmd == "status" || cmd == "diag") {
         CaliperDiag d = caliper.diag();
         Serial.printf("modo=%d on=%d framesOk=%lu framesBad=%lu lastBits=%u "
-                      "lastRaw=0x%llX clk=%lumV data=%lumV heap=%lu\n",
+                      "lastRaw=0x%llX clk=%lumV data=%lumV heap=%lu "
+                      "pins: CLK=GPIO%u DATA=GPIO%u%s\n",
                       (int)d.mode, d.on, (unsigned long)d.framesOk,
                       (unsigned long)d.framesBad, d.lastFrameBits,
                       (unsigned long long)d.lastFrameRaw, (unsigned long)d.clkMv,
-                      (unsigned long)d.dataMv, (unsigned long)ESP.getFreeHeap());
+                      (unsigned long)d.dataMv, (unsigned long)ESP.getFreeHeap(),
+                      caliper.pinClk(), caliper.pinData(),
+                      caliper.pinsSwapped() ? " (auto-intercambiados)" : "");
+        Serial.printf("adc: maxBits=%u timeouts=%lu ventanas=%lu\n",
+                      caliper.adcMaxBits, (unsigned long)caliper.adcBitTimeouts,
+                      (unsigned long)caliper.adcWindows);
     }
     else if (cmd == "capture") {
         if (appCapture()) wsBroadcastCapture(appDisplayedMm());
     }
     else if (cmd == "zero") { appToggleRelative(); wsBroadcastStatus(); }
+    else if (cmd == "pins") {
+        // Test de cableado: el pull-up interno (~45k) revela si la línea está
+        // abierta (sube a ~VDD) o conectada a un nodo que la sujeta abajo.
+        caliper.end();   // liberar ISR/tareas mientras manipulamos los pines
+        pinMode(PIN_CALIPER_CLK, INPUT);
+        pinMode(PIN_CALIPER_DATA, INPUT);
+        delay(50);
+        uint32_t clkF = analogReadMilliVolts(PIN_CALIPER_CLK);
+        uint32_t dataF = analogReadMilliVolts(PIN_CALIPER_DATA);
+        pinMode(PIN_CALIPER_CLK, INPUT_PULLUP);
+        pinMode(PIN_CALIPER_DATA, INPUT_PULLUP);
+        delay(50);
+        uint32_t clkP = analogReadMilliVolts(PIN_CALIPER_CLK);
+        uint32_t dataP = analogReadMilliVolts(PIN_CALIPER_DATA);
+        pinMode(PIN_CALIPER_CLK, INPUT);     // restaurar entradas flotantes
+        pinMode(PIN_CALIPER_DATA, INPUT);
+        Serial.printf("flotante:  clk=%lumV data=%lumV\n",
+                      (unsigned long)clkF, (unsigned long)dataF);
+        Serial.printf("pull-up:   clk=%lumV data=%lumV\n",
+                      (unsigned long)clkP, (unsigned long)dataP);
+        Serial.println("pull-up >2000mV = linea ABIERTA (soldadura/cable)");
+        Serial.println("pull-up <800mV  = conectada a un nodo que la sujeta abajo");
+        CaliperMode m = settings.readMode == 1 ? CaliperMode::DIGITAL
+                      : settings.readMode == 2 ? CaliperMode::ADC
+                                               : CaliperMode::DETECTING;
+        caliper.begin(m, settings.invert);
+    }
+    else if (cmd == "scope") {
+        // Mini analizador lógico por ADC: muestrea CLK ~2 s y reporta los
+        // intervalos entre transiciones para medir el clock real del calibre.
+        caliper.end();
+        const int MAXT = 200;
+        static int64_t tTimes[MAXT];
+        int n = 0;
+        int samples = 0;
+        bool lastHigh = analogRead(PIN_CALIPER_CLK) > 1000;  // ~0.8V en 12-bit/11db
+        int64_t t0 = esp_timer_get_time();
+        while (esp_timer_get_time() - t0 < 2000000 && n < MAXT) {
+            bool high = analogRead(PIN_CALIPER_CLK) > 1000;
+            samples++;
+            if (high != lastHigh) {
+                tTimes[n++] = esp_timer_get_time();
+                lastHigh = high;
+            }
+        }
+        int64_t span = esp_timer_get_time() - t0;
+        Serial.printf("muestras=%d en %lld ms (~%.1f kS/s) | transiciones=%d\n",
+                      samples, (long long)(span / 1000),
+                      samples * 1000.0 / span, n);
+        if (n > 1) {
+            Serial.print("intervalos (us): ");
+            for (int i = 1; i < n && i < 50; i++) {
+                Serial.printf("%ld ", (long)(tTimes[i] - tTimes[i - 1]));
+            }
+            Serial.println();
+        } else {
+            Serial.println("sin transiciones: el calibre no esta transmitiendo "
+                           "(o el clock es demasiado rapido para verlo)");
+        }
+        CaliperMode m = settings.readMode == 1 ? CaliperMode::DIGITAL
+                      : settings.readMode == 2 ? CaliperMode::ADC
+                                               : CaliperMode::DETECTING;
+        caliper.begin(m, settings.invert);
+    }
     else if (cmd.length()) {
-        Serial.println("comandos: start | stop | status | redetect | capture | zero");
+        Serial.println("comandos: start | stop | status | redetect | capture | zero | pins | scope");
     }
 }
 
