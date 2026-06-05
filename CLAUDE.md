@@ -4,8 +4,9 @@ Firmware ESP32-C3 (PlatformIO/Arduino) que lee un calibre digital Hamilton por
 su puerto SPC y lo expone por web (UI + WebSocket + REST), teclado BLE HID y
 serial. Incluye un servidor MCP para que Claude lea mediciones directamente.
 
-**Estado: funcionando en hardware real** (~11.7 Hz, 99.2% frames OK).
-Repo: https://github.com/sefeguz/calibre-esp
+**Estado: v1.1.0 desplegado y verificado en hardware real** (2026-06-05):
+~11.8 Hz (todos los paquetes del calibre), 99.3% frames OK, latencia
+medición→web ~150-300 ms. Repo: https://github.com/sefeguz/calibre-esp
 
 ## Hardware (esta unidad concreta)
 
