@@ -117,7 +117,30 @@ WebSocket en `/ws`: lecturas en vivo `{"t":"r","v":12.34,...}` (~8 Hz).
 ### Comandos serial
 
 `start` / `stop` (stream JSON) · `status` (diagnóstico) · `redetect` ·
-`capture` · `zero`
+`capture` · `zero` · `pins` (test de cableado) · `scope` (mini analizador
+lógico) · `blereset` (borrar emparejamientos BLE)
+
+## MCP — usar el calibre desde Claude
+
+En `mcp/calibre_mcp.py` hay un servidor MCP (requiere [uv](https://docs.astral.sh/uv/))
+que le da a Claude acceso directo al calibre — ideal para diseñar piezas 3D a
+medida: Claude pide cada dimensión, el usuario la mide y aprieta **BOOT**, y el
+valor llega solo.
+
+El proyecto ya incluye `.mcp.json`; al abrir Claude Code en esta carpeta se
+ofrece automáticamente (ajustar `CALIBRE_URL` si la IP difiere).
+
+| Herramienta | Función |
+|---|---|
+| `esperar_captura(etiqueta)` | Espera el botón BOOT y devuelve la medición |
+| `leer_medicion()` | Valor actual instantáneo |
+| `listar_capturas()` / `borrar_capturas()` | Log de mediciones |
+| `zero_relativo()` | Medir diferencias |
+| `estado()` | Diagnóstico del dispositivo |
+
+Ejemplo de uso: *"diseñemos una cajita para este sensor — tomá las medidas que
+necesites"* → Claude va pidiendo ancho/alto/profundidad y las captura con el
+botón.
 
 ## Diagnóstico sin osciloscopio
 

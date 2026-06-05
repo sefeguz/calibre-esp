@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "calibre": {
+      "command": "uv",
+      "args": ["run", "--script", "mcp/calibre_mcp.py"],
+      "env": {
+        "CALIBRE_URL": "http://192.168.1.43"
+      }
+    }
+  }
+}
