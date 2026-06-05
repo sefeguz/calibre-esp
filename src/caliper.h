@@ -87,7 +87,7 @@ private:
     void startDigital();
     void startAdc();
     void stopReaders();
-    bool acceptReading(const CaliperReading& r);
+    bool acceptReading(CaliperReading& r);   // mediana de 3 (modifica r)
     bool handleFrame(const Frame& f, CaliperReading& out);
     bool decode24(uint32_t packet, CaliperReading& out);
 
@@ -113,12 +113,12 @@ private:
     CaliperMode _forceMode = CaliperMode::DETECTING;
     bool _invert = false;
 
-    // filtro anti-glitch: saltos grandes requieren confirmación (ver poll)
-    bool  _jumpPending = false;
-    float _jumpFromMm = 0.0f;
-    // ídem cambio de unidad (el bit 23, inch, es el más expuesto a glitches)
-    bool        _unitPending = false;
-    CaliperUnit _pendingUnit = CaliperUnit::MM;
+    // Filtro anti-glitch por MEDIANA DE 3: salida a tasa completa (un frame
+    // de salida por frame de entrada, lag fijo de 1 frame ~112 ms) y un
+    // glitch aislado nunca es la mediana. Sin penalidad de velocidad.
+    CaliperReading _hist[3];
+    uint8_t _histCount = 0;
+    uint8_t _histIdx = 0;
     // Algunos calibres traen el conector con DATA y CLK al revés: la
     // auto-detección identifica el CLK real (el que más conmuta) y ajusta.
     uint8_t _pinClk = PIN_CALIPER_CLK;

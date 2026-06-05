@@ -63,9 +63,12 @@ Dos modos con auto-detección al boot (reintenta cada 1 s si no hay señal):
    en el C3 single-core cualquier interrupción >100 µs durante la ráfaga
    de ~7 ms rompía el paquete.
 
-Filtros anti-glitch en `acceptReading()`: saltos >2 mm requieren que el frame
-siguiente salte en la misma dirección; cambio de unidad requiere dos frames
-iguales. Cambios chicos pasan sin latencia (caso de uso: medir fino).
+Filtro anti-glitch en `acceptReading()`: **mediana de 3** — salida a tasa
+completa (un frame de salida por frame de entrada, ~11.7 Hz), lag fijo de
+1 frame (~112 ms), y un frame corrupto aislado (valor o bit de unidad falso)
+nunca es la mediana. NO usar filtros por confirmación de salto: bajan la tasa
+a la mitad durante el movimiento y el usuario lo nota (feedback explícito:
+quiere refresco instantáneo, <1 s siempre).
 
 ### Concurrencia (C3 single-core — REGLAS IMPORTANTES)
 
@@ -102,9 +105,11 @@ iguales. Cambios chicos pasan sin latencia (caso de uso: medir fino).
 ### WebSocket
 
 Con WiFi en power-save (obligatorio por coexistencia BLE) la radio drena
-lento: **no encolar de más**. Solo cambios (≥0.005 mm, máx ~5/s) + heartbeat
-1 s, y saltear si `!ws.availableForWriteAll()` (mejor perder un frame viejo
-que acumular 4 s de atraso, que es lo que pasaba).
+lento: **no encolar de más**. Cambios cada ≥90 ms (~11 Hz) con flush
+garantizado del último valor (un cambio suprimido se envía apenas vence el
+intervalo) + heartbeat 500 ms, y saltear si `!ws.availableForWriteAll()`
+(mejor perder un frame viejo que acumular 4 s de atraso, que es lo que
+pasaba al encolar todo).
 
 ## Build / flash / debug
 

@@ -405,49 +405,31 @@ bool Caliper::handleFrame(const Frame& f, CaliperReading& out)
     return false;
 }
 
-// Filtro anti-glitch: un frame con bits corruptos (WiFi/BLE recortan ~4% de
-// los paquetes) a veces pasa la validación de rango y muestra un valor falso
-// por un instante. Los cambios chicos pasan directo (cero latencia para
-// medir); un salto > 2 mm queda pendiente y se acepta recién si el frame
-// siguiente también salta en la MISMA dirección (movimiento real: todos los
-// frames barren para el mismo lado; glitch: valor aislado al azar).
-bool Caliper::acceptReading(const CaliperReading& r)
+// Filtro anti-glitch por MEDIANA DE 3. Un frame corrupto (valor o bit de
+// unidad falso) entra a la ventana pero nunca sale: la mediana siempre es
+// uno de los frames vecinos legítimos. A diferencia de un filtro por
+// confirmación, NO baja la tasa: cada frame de entrada produce uno de
+// salida (lag fijo de 1 frame ~112 ms durante movimiento, imperceptible).
+// La salida es siempre un frame REAL (consistente en counts/unit/raw).
+bool Caliper::acceptReading(CaliperReading& r)
 {
-    if (!_hasReading || !_on) {        // primera lectura o calibre recién prendido
-        _jumpPending = false;
-        _unitPending = false;
+    _hist[_histIdx] = r;
+    _histIdx = (_histIdx + 1) % 3;
+    if (_histCount < 3) {           // warmup: pasar directo
+        _histCount++;
         return true;
     }
 
-    // cambio de unidad (bit 23): confirmar con un segundo frame igual
-    if (r.unit != _last.unit) {
-        if (!(_unitPending && r.unit == _pendingUnit)) {
-            _unitPending = true;
-            _pendingUnit = r.unit;
-            return false;
-        }
-        _unitPending = false;          // confirmado: sigue al chequeo de salto
-    } else {
-        _unitPending = false;
-    }
-
-    float delta = r.value_mm - _last.value_mm;
-    if (fabsf(delta) <= 2.0f) {
-        _jumpPending = false;
-        return true;
-    }
-
-    if (_jumpPending) {
-        // segundo salto consecutivo: ¿misma dirección que el pendiente?
-        float prevDelta = _jumpFromMm;
-        _jumpPending = false;
-        if ((delta > 0) == (prevDelta > 0)) return true;   // barrido real
-        return false;                                       // glitches sueltos
-    }
-
-    _jumpPending = true;       // retener un frame (~112 ms) para confirmar
-    _jumpFromMm = delta;
-    return false;
+    // elegir el frame con el value_mm del medio
+    const CaliperReading &a = _hist[0], &b = _hist[1], &c = _hist[2];
+    const CaliperReading* m;
+    if ((a.value_mm <= b.value_mm) == (b.value_mm <= c.value_mm))      m = &b;
+    else if ((b.value_mm <= a.value_mm) == (a.value_mm <= c.value_mm)) m = &a;
+    else                                                               m = &c;
+    uint32_t freshTs = r.timestamp;   // el frame recién llegado es el más nuevo
+    r = *m;
+    r.timestamp = freshTs;
+    return true;
 }
 
 bool Caliper::poll(CaliperReading& out)
@@ -465,6 +447,8 @@ bool Caliper::poll(CaliperReading& out)
     // Detección de apagado: sin paquetes por CALIPER_IDLE_OFF_MS
     if (_on && (esp_timer_get_time() - _lastPacketUs) > (int64_t)CALIPER_IDLE_OFF_MS * 1000) {
         _on = false;
+        _histCount = 0;   // resetear la ventana de mediana para el re-encendido
+        _histIdx = 0;
     }
 
     bool got = false;

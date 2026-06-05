@@ -206,28 +206,35 @@ void loop()
         appClearCaptures();
     }
 
-    // lecturas nuevas del calibre -> WebSocket + serial
+    // lecturas nuevas del calibre -> WebSocket + serial.
+    // WS a tasa casi completa (cambios cada >=90 ms ~ 11 Hz) con flush
+    // garantizado: si un cambio quedó suprimido por el intervalo, se envía
+    // apenas vence — el valor final SIEMPRE llega en <100 ms. El guard de
+    // cola llena en wsBroadcastReading evita el backlog con power-save.
+    static bool wsDirty = false;
     CaliperReading r;
     if (caliper.poll(r)) {
-        float disp = appDisplayedMm();
-
-        // Throttle del WS: solo cambios (máx ~5/s) + heartbeat de 1 s.
-        // Encolar las ~11 lecturas/s satura la cola del WS con el WiFi en
-        // power-save y la UI termina mostrando datos con segundos de atraso.
+        wsDirty = true;
+        if (serialStream) {
+            Serial.printf("{\"mm\":%.3f,\"counts\":%ld,\"unit\":\"%s\",\"ts\":%lu}\n",
+                          appDisplayedMm(), (long)r.counts,
+                          r.unit == CaliperUnit::INCH ? "in" : "mm",
+                          (unsigned long)r.timestamp);
+        }
+    }
+    {
         static float lastSentMm = -99999.0f;
         static uint32_t lastSentAt = 0;
         uint32_t nowMs = millis();
+        float disp = appDisplayedMm();
         bool changed = fabsf(disp - lastSentMm) >= 0.005f;
-        if ((changed && nowMs - lastSentAt >= 150) || nowMs - lastSentAt >= 1000) {
-            wsBroadcastReading(r, disp, appRelativeActive());
+        if (caliper.isOn() &&
+            ((wsDirty && changed && nowMs - lastSentAt >= 90) ||
+             nowMs - lastSentAt >= 500)) {
+            wsBroadcastReading(caliper.lastAtomic(), disp, appRelativeActive());
             lastSentMm = disp;
             lastSentAt = nowMs;
-        }
-        if (serialStream) {
-            Serial.printf("{\"mm\":%.3f,\"counts\":%ld,\"unit\":\"%s\",\"ts\":%lu}\n",
-                          disp, (long)r.counts,
-                          r.unit == CaliperUnit::INCH ? "in" : "mm",
-                          (unsigned long)r.timestamp);
+            wsDirty = false;
         }
     }
 
