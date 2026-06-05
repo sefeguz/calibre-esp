@@ -61,7 +61,7 @@ DATA ──────────────────────── GP
 CLK  ──────────────────────── GPIO1  (ADC1_CH1)
 VCC  ── (sin conectar; el calibre usa su pila)
 
-Botón ── GPIO3 a GND (INPUT_PULLUP)
+Botón ── BOOT/GPIO9 onboard (INPUT_PULLUP; strapping solo se muestrea al reset)
 LED   ── GPIO8 (onboard en C3 SuperMini, lógica invertida)
 ```
 

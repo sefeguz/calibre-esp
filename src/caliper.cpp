@@ -95,9 +95,10 @@ void Caliper::adcTask(void* arg)
     uint32_t interFrameMs = 0;  // intervalo entre paquetes, medido en caliente
 
     for (;;) {
-        // ceder CPU: lo mínimo 1 tick; si conocemos el ritmo, dormir el 60% del gap
+        // Ceder CPU entre paquetes: dormir ~55% del intervalo y quedar
+        // "caliente" el resto, para cazar TODOS los paquetes (~9 Hz).
         if (interFrameMs >= 40) {
-            vTaskDelay(pdMS_TO_TICKS(interFrameMs * 6 / 10));
+            vTaskDelay(pdMS_TO_TICKS(interFrameMs * 55 / 100));
         } else {
             vTaskDelay(1);
         }
@@ -129,7 +130,17 @@ void Caliper::adcTask(void* arg)
             uint32_t nowMs = millis();
             if (self->_lastAdcFrameMs) {
                 uint32_t d = nowMs - self->_lastAdcFrameMs;
-                if (d > 20 && d < 2000) interFrameMs = d;
+                if (d > 20 && d < 2000) {
+                    // Seguir el MÍNIMO intervalo visto (el ritmo real del
+                    // calibre); un promedio simple converge a "paquete por
+                    // medio" si se pierde uno. Deriva lenta hacia arriba por
+                    // si el calibre cambia de ritmo.
+                    if (interFrameMs == 0 || d < interFrameMs) {
+                        interFrameMs = d;
+                    } else {
+                        interFrameMs += (d - interFrameMs) / 16;
+                    }
+                }
             }
             self->_lastAdcFrameMs = nowMs;
         } else {

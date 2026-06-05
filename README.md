@@ -28,7 +28,7 @@ CLK  ──────────────────────── GP
 DATA ──────────────────────── GPIO1
 VCC  ── (NO conectar: el calibre usa su propia pila)
 
-Botón ── entre GPIO3 y GND (se activa INPUT_PULLUP interno)
+Botón ── el botón BOOT (GPIO9) que ya trae la placa C3 SuperMini
 LED   ── GPIO8 (ya viene en la placa C3 SuperMini)
 ```
 

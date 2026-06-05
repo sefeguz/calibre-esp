@@ -13,7 +13,9 @@
 // ---------------------------------------------------------------------------
 #define PIN_CALIPER_DATA 1   // ADC1_CH1 (cableado real de esta unidad)
 #define PIN_CALIPER_CLK  0   // ADC1_CH0
-#define PIN_BUTTON       3   // botón a GND, INPUT_PULLUP
+#define PIN_BUTTON       9   // botón BOOT onboard de la SuperMini (a GND).
+                             // Es strapping pin pero solo se muestrea en el
+                             // reset; en runtime es un botón normal.
 #define PIN_LED          8   // LED onboard (C3 SuperMini: lógica invertida)
 #define LED_INVERTED     true
 

@@ -47,7 +47,7 @@ Más el botón de captura:
 
 | Componente | Conexión |
 |---|---|
-| Pulsador | entre **GPIO3** y **GND** (pull-up interno) |
+| Botón de captura | **BOOT (GPIO9)** — ya integrado en la SuperMini, sin soldar nada. (Si se prefiere un pulsador externo: cualquier GPIO libre a GND y ajustar `PIN_BUTTON`.) |
 | LED estado | GPIO8 — ya integrado en la placa C3 SuperMini |
 
 ### Conector físico
