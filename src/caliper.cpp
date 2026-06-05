@@ -3,6 +3,7 @@
 
 #include <esp_timer.h>
 #include <driver/gpio.h>
+#include <esp_adc/adc_continuous.h>
 
 // El driver oneshot del ADC no tolera lecturas concurrentes (detectTask/adcTask
 // vs diag() desde otra tarea): falla con "adc oneshot read fail" y devuelve 0.
@@ -69,85 +70,90 @@ void IRAM_ATTR Caliper::clkIsr(void* arg)
 }
 
 // ---------------------------------------------------------------------------
-// Modo ADC — polling con umbral por software (EspDRO) para señales de ~1.5 V.
-// Secuencia probada de EspDRO: esperar CLK alto->bajo, luego bajo->alto, y
-// muestrear DATA (mismo flanco ascendente que el modo digital). Solo viable
-// con calibres de clock lento (<~4 kHz).
+// Modo ADC por DMA (adc_continuous) — para señales de ~1.5 V.
 //
-// C3 es single-core: un busy-loop permanente mata al idle task y dispara el
-// watchdog. Estrategia: dormir ~60% del intervalo entre paquetes (medido
-// adaptativamente) y quedar "caliente" solo alrededor de la ráfaga.
+// El polling con analogRead (EspDRO) funciona, pero en el C3 single-core
+// cualquier interrupción de WiFi/BLE de >100 µs durante la ráfaga rompe ese
+// paquete (~50% de pérdida con la radio activa). El modo continuo del ADC
+// muestrea por HARDWARE a 80 kS/s (40 kS/s por canal, ~6 muestras por fase
+// del clock más lento) sin importar qué hace la CPU; la tarea después
+// decodifica la forma de onda completa con histéresis. Captura ~100% de los
+// paquetes bajo cualquier carga, y DATA queda muestreado a ≤25 µs del flanco
+// (adiós glitches del bit 23/inch por muestreo tardío).
 // ---------------------------------------------------------------------------
-int Caliper::adcReadBit(uint32_t bitDeadlineMs)
-{
-    while (adcReadRaw(_pinClk) > CALIPER_ADC_THRESH_RAW) {
-        if (millis() > bitDeadlineMs) return -1;
-    }
-    while (adcReadRaw(_pinClk) < CALIPER_ADC_THRESH_RAW) {
-        if (millis() > bitDeadlineMs) return -1;
-    }
-    return adcReadRaw(_pinData) > CALIPER_ADC_THRESH_RAW ? 1 : 0;
-}
+#define DMA_SAMPLE_FREQ_HZ   80000   // total (2 canales -> 40 kS/s c/u)
+#define DMA_FRAME_BYTES      256
+#define DMA_POOL_BYTES       8192    // ~25 ms de margen si la CPU se atrasa
+#define DMA_THRESH_HIGH_RAW  1400    // histéresis (1.5 V ~ 2400 cuentas)
+#define DMA_THRESH_LOW_RAW   800
+#define DMA_GAP_SAMPLES      80      // ~2 ms sin flancos de CLK => fin de frame
 
-void Caliper::adcTask(void* arg)
+void Caliper::dmaTask(void* arg)
 {
     Caliper* self = static_cast<Caliper*>(arg);
-    uint32_t interFrameMs = 0;  // intervalo entre paquetes, medido en caliente
+    adc_continuous_handle_t handle = (adc_continuous_handle_t)self->_dmaHandle;
 
-    for (;;) {
-        // Ceder CPU entre paquetes: dormir ~55% del intervalo y quedar
-        // "caliente" el resto, para cazar TODOS los paquetes (~9 Hz).
-        if (interFrameMs >= 40) {
-            vTaskDelay(pdMS_TO_TICKS(interFrameMs * 55 / 100));
-        } else {
-            vTaskDelay(1);
-        }
+    adc_channel_t clkCh, dataCh;
+    adc_unit_t unit;
+    adc_continuous_io_to_channel(self->_pinClk, &unit, &clkCh);
+    adc_continuous_io_to_channel(self->_pinData, &unit, &dataCh);
 
-        uint32_t packet = 0;
-        int bitIndex = 0;
-        bool ok = false;
-        uint32_t packetDeadline = millis() + 300;
+    uint8_t buf[DMA_FRAME_BYTES];
+    bool clkHigh = false, dataHigh = false;
+    uint64_t shift = 0;
+    uint8_t bits = 0;
+    uint32_t clkSamplesSinceEdge = 0;
 
-        while (millis() < packetDeadline) {
-            int bit = self->adcReadBit(millis() + 30);
-            if (bit < 0) {            // gap/timeout: frame trunco, reintentar
-                self->adcBitTimeouts = self->adcBitTimeouts + 1;
-                bitIndex = 0;
-                packet = 0;
+    while (!self->_dmaStop) {
+        uint32_t got = 0;
+        esp_err_t err = adc_continuous_read(handle, buf, sizeof(buf), &got, 50);
+        if (err != ESP_OK) continue;   // timeout: sin datos (no debería pasar)
+
+        for (uint32_t i = 0; i + sizeof(adc_digi_output_data_t) <= got;
+             i += sizeof(adc_digi_output_data_t)) {
+            adc_digi_output_data_t* p = (adc_digi_output_data_t*)&buf[i];
+            uint32_t ch = p->type2.channel;
+            uint32_t raw = p->type2.data;
+
+            if (ch == (uint32_t)dataCh) {
+                // histéresis para no castañetear cerca del umbral
+                dataHigh = dataHigh ? (raw > DMA_THRESH_LOW_RAW)
+                                    : (raw > DMA_THRESH_HIGH_RAW);
+                self->_lastDataRaw = raw;
                 continue;
             }
-            packet |= ((uint32_t)bit) << bitIndex;
-            bitIndex++;
-            if (bitIndex > self->adcMaxBits) self->adcMaxBits = bitIndex;
-            if (bitIndex == CALIPER_PACKET_BITS) { ok = true; break; }
-        }
-        self->adcWindows = self->adcWindows + 1;
+            if (ch != (uint32_t)clkCh) continue;
 
-        if (ok) {
-            Frame f = { packet, CALIPER_PACKET_BITS };
-            xQueueSend(self->_queue, &f, 0);
+            self->_lastClkRaw = raw;
+            clkSamplesSinceEdge++;
 
-            uint32_t nowMs = millis();
-            if (self->_lastAdcFrameMs) {
-                uint32_t d = nowMs - self->_lastAdcFrameMs;
-                if (d > 20 && d < 2000) {
-                    // Seguir el MÍNIMO intervalo visto (el ritmo real del
-                    // calibre); un promedio simple converge a "paquete por
-                    // medio" si se pierde uno. Deriva lenta hacia arriba por
-                    // si el calibre cambia de ritmo.
-                    if (interFrameMs == 0 || d < interFrameMs) {
-                        interFrameMs = d;
-                    } else {
-                        interFrameMs += (d - interFrameMs) / 16;
+            // gap sin flancos => el frame terminó: encolarlo con su conteo
+            if (bits > 0 && clkSamplesSinceEdge > DMA_GAP_SAMPLES) {
+                Frame f = { shift, bits };
+                xQueueSend(self->_queue, &f, 0);
+                shift = 0;
+                bits = 0;
+                self->adcWindows = self->adcWindows + 1;
+            }
+
+            bool nh = clkHigh ? (raw > DMA_THRESH_LOW_RAW)
+                              : (raw > DMA_THRESH_HIGH_RAW);
+            if (nh != clkHigh) {
+                clkHigh = nh;
+                clkSamplesSinceEdge = 0;
+                if (nh) {  // flanco ascendente de CLK: el dato es válido
+                    if (bits < 60) {
+                        shift |= ((uint64_t)(dataHigh ? 1 : 0)) << bits;
+                        bits++;
+                        if (bits > self->adcMaxBits) self->adcMaxBits = bits;
                     }
                 }
             }
-            self->_lastAdcFrameMs = nowMs;
-        } else {
-            interFrameMs = 0;                  // sin señal: olvidar el ritmo
-            vTaskDelay(pdMS_TO_TICKS(50));     // y dormir bastante
         }
     }
+
+    self->_adcTaskHandle = nullptr;
+    vTaskDelete(nullptr);
 }
 
 // ---------------------------------------------------------------------------
@@ -282,9 +288,49 @@ void Caliper::startDigital()
 void Caliper::startAdc()
 {
     stopReaders();
+
+    adc_channel_t clkCh, dataCh;
+    adc_unit_t unit;
+    if (adc_continuous_io_to_channel(_pinClk, &unit, &clkCh) != ESP_OK ||
+        adc_continuous_io_to_channel(_pinData, &unit, &dataCh) != ESP_OK) {
+        log_e("pines sin canal ADC");
+        return;
+    }
+
+    adc_continuous_handle_t handle = nullptr;
+    adc_continuous_handle_cfg_t hcfg = {};
+    hcfg.max_store_buf_size = DMA_POOL_BYTES;
+    hcfg.conv_frame_size = DMA_FRAME_BYTES;
+    if (adc_continuous_new_handle(&hcfg, &handle) != ESP_OK) {
+        log_e("adc_continuous_new_handle fallo");
+        return;
+    }
+
+    adc_digi_pattern_config_t pattern[2] = {};
+    pattern[0].atten = ADC_ATTEN_DB_12;
+    pattern[0].channel = clkCh;
+    pattern[0].unit = ADC_UNIT_1;
+    pattern[0].bit_width = 12;
+    pattern[1] = pattern[0];
+    pattern[1].channel = dataCh;
+
+    adc_continuous_config_t ccfg = {};
+    ccfg.pattern_num = 2;
+    ccfg.adc_pattern = pattern;
+    ccfg.sample_freq_hz = DMA_SAMPLE_FREQ_HZ;
+    ccfg.conv_mode = ADC_CONV_SINGLE_UNIT_1;
+    ccfg.format = ADC_DIGI_OUTPUT_FORMAT_TYPE2;
+    if (adc_continuous_config(handle, &ccfg) != ESP_OK ||
+        adc_continuous_start(handle) != ESP_OK) {
+        log_e("adc_continuous config/start fallo");
+        adc_continuous_deinit(handle);
+        return;
+    }
+
+    _dmaHandle = handle;
+    _dmaStop = false;
     _mode = CaliperMode::ADC;
-    _lastAdcFrameMs = 0;
-    xTaskCreate(adcTask, "cal_adc", 3072, this, CALIPER_ADC_TASK_PRIO, &_adcTaskHandle);
+    xTaskCreate(dmaTask, "cal_dma", 3072, this, CALIPER_ADC_TASK_PRIO, &_adcTaskHandle);
 }
 
 void Caliper::stopReaders()
@@ -293,7 +339,17 @@ void Caliper::stopReaders()
         gpio_isr_handler_remove((gpio_num_t)_pinClk);
         _isrAttached = false;
     }
-    if (_adcTaskHandle) { vTaskDelete(_adcTaskHandle); _adcTaskHandle = nullptr; }
+    if (_adcTaskHandle) {
+        // pedirle a la tarea que termine (matarla a mitad de una lectura del
+        // driver dejaría locks del kernel tomados) y recién después apagar
+        _dmaStop = true;
+        while (_adcTaskHandle) vTaskDelay(1);
+    }
+    if (_dmaHandle) {
+        adc_continuous_stop((adc_continuous_handle_t)_dmaHandle);
+        adc_continuous_deinit((adc_continuous_handle_t)_dmaHandle);
+        _dmaHandle = nullptr;
+    }
     _mode = CaliperMode::DETECTING;
 }
 
@@ -349,6 +405,51 @@ bool Caliper::handleFrame(const Frame& f, CaliperReading& out)
     return false;
 }
 
+// Filtro anti-glitch: un frame con bits corruptos (WiFi/BLE recortan ~4% de
+// los paquetes) a veces pasa la validación de rango y muestra un valor falso
+// por un instante. Los cambios chicos pasan directo (cero latencia para
+// medir); un salto > 2 mm queda pendiente y se acepta recién si el frame
+// siguiente también salta en la MISMA dirección (movimiento real: todos los
+// frames barren para el mismo lado; glitch: valor aislado al azar).
+bool Caliper::acceptReading(const CaliperReading& r)
+{
+    if (!_hasReading || !_on) {        // primera lectura o calibre recién prendido
+        _jumpPending = false;
+        _unitPending = false;
+        return true;
+    }
+
+    // cambio de unidad (bit 23): confirmar con un segundo frame igual
+    if (r.unit != _last.unit) {
+        if (!(_unitPending && r.unit == _pendingUnit)) {
+            _unitPending = true;
+            _pendingUnit = r.unit;
+            return false;
+        }
+        _unitPending = false;          // confirmado: sigue al chequeo de salto
+    } else {
+        _unitPending = false;
+    }
+
+    float delta = r.value_mm - _last.value_mm;
+    if (fabsf(delta) <= 2.0f) {
+        _jumpPending = false;
+        return true;
+    }
+
+    if (_jumpPending) {
+        // segundo salto consecutivo: ¿misma dirección que el pendiente?
+        float prevDelta = _jumpFromMm;
+        _jumpPending = false;
+        if ((delta > 0) == (prevDelta > 0)) return true;   // barrido real
+        return false;                                       // glitches sueltos
+    }
+
+    _jumpPending = true;       // retener un frame (~112 ms) para confirmar
+    _jumpFromMm = delta;
+    return false;
+}
+
 bool Caliper::poll(CaliperReading& out)
 {
     // Re-detección pedida desde web/serial: aplicarla acá, en la tarea del
@@ -382,15 +483,15 @@ bool Caliper::poll(CaliperReading& out)
             pending = true;
         }
         portEXIT_CRITICAL(&_mux);
-        if (pending && handleFrame(f, out)) got = true;
+        if (pending && handleFrame(f, out) && acceptReading(out)) got = true;
     }
 
     // Drenar la cola (frames cerrados por el ISR o la tarea ADC); quedarse
-    // con la última lectura válida.
+    // con la última lectura válida que pase el filtro anti-glitch.
     Frame f;
     while (xQueueReceive(_queue, &f, 0) == pdTRUE) {
         CaliperReading r;
-        if (handleFrame(f, r)) {
+        if (handleFrame(f, r) && acceptReading(r)) {
             out = r;
             got = true;
         }
@@ -427,9 +528,14 @@ CaliperDiag Caliper::diag()
     d.lastFrameBits = _lastFrameBits;
     d.lastFrameRaw = _lastFrameRaw;
     portEXIT_CRITICAL(&_mux);
-    // niveles instantáneos (fuera del mux: el ADC bloquea) — con suerte CLK
-    // se ve en reposo (alto). Usa el mapeo de pines ya detectado.
-    d.clkMv = adcReadMv(_pinClk);
-    d.dataMv = adcReadMv(_pinData);
+    // Niveles instantáneos. En modo ADC-DMA el driver continuo es dueño del
+    // ADC (una lectura oneshot fallaría): usar los niveles que ya vio el DMA.
+    if (_mode == CaliperMode::ADC) {
+        d.clkMv = (uint32_t)_lastClkRaw * 2500 / 4095;
+        d.dataMv = (uint32_t)_lastDataRaw * 2500 / 4095;
+    } else {
+        d.clkMv = adcReadMv(_pinClk);
+        d.dataMv = adcReadMv(_pinData);
+    }
     return d;
 }

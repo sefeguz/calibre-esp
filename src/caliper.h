@@ -81,15 +81,15 @@ private:
     struct Frame { uint64_t bits; uint8_t count; };
 
     static void IRAM_ATTR clkIsr(void* arg);
-    static void adcTask(void* arg);
+    static void dmaTask(void* arg);
     static void detectTask(void* arg);
 
     void startDigital();
     void startAdc();
     void stopReaders();
+    bool acceptReading(const CaliperReading& r);
     bool handleFrame(const Frame& f, CaliperReading& out);
     bool decode24(uint32_t packet, CaliperReading& out);
-    int  adcReadBit(uint32_t bitDeadlineMs);
 
     // estado ISR (modo digital)
     volatile uint64_t _isrShift = 0;
@@ -100,12 +100,25 @@ private:
     QueueHandle_t _queue = nullptr;
     TaskHandle_t  _adcTaskHandle = nullptr;
     TaskHandle_t  _detectTaskHandle = nullptr;
-    uint32_t      _lastAdcFrameMs = 0;
     bool          _isrAttached = false;
+
+    // modo ADC por DMA (adc_continuous): el hardware muestrea a 80 kS/s sin
+    // importar las interrupciones de WiFi/BLE; la tarea decodifica la onda
+    void* _dmaHandle = nullptr;            // adc_continuous_handle_t
+    volatile bool _dmaStop = false;
+    volatile uint16_t _lastClkRaw = 0;     // niveles vistos por el DMA (diag)
+    volatile uint16_t _lastDataRaw = 0;
 
     CaliperMode _mode = CaliperMode::DETECTING;
     CaliperMode _forceMode = CaliperMode::DETECTING;
     bool _invert = false;
+
+    // filtro anti-glitch: saltos grandes requieren confirmación (ver poll)
+    bool  _jumpPending = false;
+    float _jumpFromMm = 0.0f;
+    // ídem cambio de unidad (el bit 23, inch, es el más expuesto a glitches)
+    bool        _unitPending = false;
+    CaliperUnit _pendingUnit = CaliperUnit::MM;
     // Algunos calibres traen el conector con DATA y CLK al revés: la
     // auto-detección identifica el CLK real (el que más conmuta) y ajusta.
     uint8_t _pinClk = PIN_CALIPER_CLK;
