@@ -5,10 +5,19 @@
 
 enum class EolKey : uint8_t { NONE = 0, ENTER = 1, TAB = 2, SPACE = 3 };
 
+#define WIFI_MAX_NETWORKS 10
+
+struct WifiNet {
+    String ssid;
+    String pass;
+};
+
 struct Settings {
-    // red
-    String wifiSsid;
-    String wifiPass;
+    // redes WiFi guardadas: el equipo escanea y se conecta a la que
+    // encuentre con mejor señal (casa, trabajo, hotspot del celu...)
+    WifiNet wifi[WIFI_MAX_NETWORKS];
+    uint8_t wifiCount;
+
     String deviceName;   // mDNS + nombre BLE
 
     // teclado BLE
@@ -23,6 +32,9 @@ struct Settings {
     void load();
     void save() const;
     void resetWifi();
+
+    // devuelve la pass guardada para un SSID, o "" si no está
+    String passFor(const String& ssid) const;
 };
 
 extern Settings settings;

@@ -96,6 +96,10 @@ pio device monitor
 
 ### Configuración (web)
 
+- **Redes WiFi (hasta 10)**: el equipo escanea al encender y se conecta a la
+  red guardada con mejor señal (casa, trabajo, hotspot del celular...). Si no
+  encuentra ninguna queda el hotspot `Calibre-ESP` y re-escanea cada 30 s; si
+  perdés la red estando conectado, el hotspot vuelve solo.
 - **Separador decimal** del teclado BLE: `,` (default, Excel en español) o `.`
 - **Tecla final**: Enter / Tab / Espacio / ninguna
 - **Modo de lectura**: auto / digital (3 V) / ADC (1.5 V)

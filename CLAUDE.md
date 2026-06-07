@@ -149,9 +149,12 @@ $env:PYTHONUTF8 = "1"
   `send(200, tipo, (const uint8_t*)PTR, strlen(PTR))` — la sobrecarga con
   `const char*`/String COPIA todo al heap por request; con varios clientes
   el heap tocó 2 KB (minHeap) y corrompía respuestas (scrambling).
-- WiFi: AP "Calibre-ESP" instantáneo al boot (~2 s) + STA en paralelo; al
-  conectar la STA el AP se apaga solo (`wifiPoll()` en webserverLoop). Lejos
-  de casa el hotspot está siempre disponible sin esperar timeouts.
+- WiFi multi-red (hasta 10 en NVS, `settings.wifi[]`): AP instantáneo al
+  boot (~2 s) + máquina de estados `wifiTick()` en webserverLoop — escanea,
+  conecta a la guardada con mejor RSSI, prueba candidatas en orden, AP se
+  apaga al conectar y VUELVE si se pierde la red >20 s (roaming
+  casa/trabajo/hotspot). Migración automática del formato viejo de 1 red.
+  El POST /api/config recibe `wifi: [{ssid, pass}]` (pass vacía = conservar).
 - `GET /llms.txt`: guía para asistentes IA (API + flujo de sesiones) — un
   LLM con solo HTTP puede autodescubrir el dispositivo. La vista Ayuda de la
   UI tiene un botón que la copia al portapapeles.

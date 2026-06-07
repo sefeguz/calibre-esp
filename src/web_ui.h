@@ -223,9 +223,16 @@ textarea{font-family:Consolas,Menlo,monospace;min-height:130px;resize:vertical}
   <div class="panel">
     <h2>Configuraci&oacute;n</h2>
     <form id="cfg" onsubmit="saveCfg(event)">
-      <div class="cols">
-        <div><label>WiFi SSID</label><input name="ssid" autocomplete="off"></div>
-        <div><label>WiFi Password</label><input name="pass" type="password" autocomplete="off" placeholder="(sin cambios)"></div>
+      <label>Redes WiFi guardadas (m&aacute;x 10) &mdash; se conecta a la de mejor se&ntilde;al que encuentre</label>
+      <table id="wifiTable"><tbody></tbody></table>
+      <div class="cols" style="margin-top:8px">
+        <div><input id="wifiSsidNew" placeholder="SSID" autocomplete="off"></div>
+        <div style="display:flex;gap:8px">
+          <input id="wifiPassNew" type="password" placeholder="Password" autocomplete="off">
+          <button type="button" onclick="addWifi()" style="flex-shrink:0">Agregar</button>
+        </div>
+      </div>
+      <div class="cols" style="margin-top:6px">
         <div><label>Nombre del dispositivo (mDNS/BLE)</label><input name="name"></div>
         <div><label>Separador decimal (teclado BLE)</label>
           <select name="sep"><option value=",">, (coma &mdash; Excel ES)</option><option value=".">. (punto)</option></select></div>
@@ -474,10 +481,38 @@ function copyLlms(){
 }
 
 /* ---------- config ---------- */
+let cfgWifi=[];   // [{ssid, pass|null}] — pass null = conservar la guardada
+function renderWifi(){
+  const tb=document.querySelector('#wifiTable tbody');
+  tb.innerHTML='';
+  cfgWifi.forEach((w,i)=>{
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${esc(w.ssid)}${w.pass!==null?' <span style="color:var(--ok);font-size:.75rem">(nueva)</span>':''}</td>
+      <td style="width:40px;text-align:right"><button type="button" title="Quitar" style="padding:4px 9px;color:var(--bad)" onclick="delWifi(${i})">&#10005;</button></td>`;
+    tb.appendChild(tr);
+  });
+  if(!cfgWifi.length){
+    tb.innerHTML='<tr><td style="color:var(--dim)">sin redes guardadas — el equipo queda en modo hotspot</td></tr>';
+  }
+}
+function addWifi(){
+  const s=document.getElementById('wifiSsidNew'), p=document.getElementById('wifiPassNew');
+  const ssid=s.value.trim();
+  if(!ssid){ toast('Escribí el SSID'); return; }
+  if(cfgWifi.length>=10){ toast('Máximo 10 redes'); return; }
+  const i=cfgWifi.findIndex(w=>w.ssid===ssid);
+  if(i>=0) cfgWifi[i].pass=p.value;       // re-agregar = actualizar pass
+  else cfgWifi.push({ssid:ssid,pass:p.value});
+  s.value=''; p.value='';
+  renderWifi();
+}
+function delWifi(i){ cfgWifi.splice(i,1); renderWifi(); }
 function loadCfg(){
   fetch('/api/config').then(r=>r.json()).then(j=>{
     const f=document.getElementById('cfg');
-    f.ssid.value=j.ssid; f.name.value=j.name; f.sep.value=j.sep;
+    cfgWifi=(j.networks||[]).map(s=>({ssid:s,pass:null}));
+    renderWifi();
+    f.name.value=j.name; f.sep.value=j.sep;
     f.eol.value=j.eol; f.ble.value=j.ble?1:0; f.rmode.value=j.rmode; f.inv.value=j.inv?1:0;
     cfgSep=j.sep;
     document.getElementById('fwv').textContent=j.fw;
@@ -487,7 +522,8 @@ function loadCfg(){
 function saveCfg(ev){
   ev.preventDefault();
   const f=ev.target;
-  const body={ssid:f.ssid.value,pass:f.pass.value,name:f.name.value,sep:f.sep.value,
+  const body={wifi:cfgWifi.map(w=>({ssid:w.ssid,pass:w.pass===null?'':w.pass})),
+              name:f.name.value,sep:f.sep.value,
               eol:+f.eol.value,ble:f.ble.value==='1',rmode:+f.rmode.value,inv:f.inv.value==='1'};
   cfgSep=f.sep.value;
   fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})

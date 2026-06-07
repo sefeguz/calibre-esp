@@ -24,12 +24,23 @@ static bool apMode = false;
 bool webserverInApMode() { return apMode; }
 
 // ---------------------------------------------------------------------------
-// WiFi: AP instantáneo + STA en paralelo. El hotspot "Calibre-ESP" está
-// disponible a ~2 s del encendido SIEMPRE (clave para uso portátil: nada de
-// esperar un timeout de 30 s lejos de casa). Si la red guardada aparece, la
-// conexión STA se hace por atrás y el AP se apaga solo (ver webserverLoop).
+// WiFi multi-red con roaming:
+//  - AP "Calibre-ESP" instantáneo (~2 s) SIEMPRE al encender.
+//  - Escanea y se conecta a la red GUARDADA con mejor señal (hasta 10:
+//    casa, trabajo, hotspot del celu...). Si falla una, prueba la próxima.
+//  - Sin redes al alcance: queda el AP y re-escanea cada 30 s.
+//  - Conectado: el AP se apaga. Si se pierde la red >20 s (te fuiste),
+//    vuelve el AP y arranca el ciclo de escaneo de nuevo.
 // ---------------------------------------------------------------------------
-static bool staPending = false;   // esperando que la STA conecte
+enum class WifiState : uint8_t { IDLE, SCANNING, CONNECTING, CONNECTED };
+
+static WifiState wifiState = WifiState::IDLE;
+static uint32_t wifiNextScanMs = 0;
+static uint32_t wifiDeadlineMs = 0;
+static int8_t   wifiCand[WIFI_MAX_NETWORKS];   // índices a settings.wifi
+static uint8_t  wifiCandCount = 0;
+static uint8_t  wifiCandIdx = 0;
+static uint32_t staLostSinceMs = 0;
 
 // Slug del nombre del dispositivo para hostname/mDNS: minúsculas, solo
 // [a-z0-9-]. "Calibre-ESP" -> "calibre-esp" -> http://calibre-esp.local
@@ -48,42 +59,135 @@ static String hostSlug()
     return out;
 }
 
-static void wifiBegin()
+static void apEnable()
 {
-    WiFi.setHostname(hostSlug().c_str());
-
+    if (apMode) return;
     apMode = true;
     WiFi.mode(WIFI_AP_STA);
     WiFi.softAP(AP_SSID, AP_PASS);
     dnsServer.start(53, "*", WiFi.softAPIP());      // portal cautivo
     Serial.printf("[wifi] AP '%s' listo, IP: %s\n", AP_SSID,
                   WiFi.softAPIP().toString().c_str());
-
-    if (settings.wifiSsid.length() > 0) {
-        WiFi.setAutoReconnect(true);
-        WiFi.begin(settings.wifiSsid.c_str(), settings.wifiPass.c_str());
-        staPending = true;
-        Serial.printf("[wifi] intentando '%s' en segundo plano...\n",
-                      settings.wifiSsid.c_str());
-    }
 }
 
-// Llamado desde webserverLoop: cuando la STA conecta, apagar el AP.
-static void wifiPoll()
+static void wifiTryCandidate()
 {
-    if (!staPending || WiFi.status() != WL_CONNECTED) return;
-    staPending = false;
-    apMode = false;
-    dnsServer.stop();
-    WiFi.softAPdisconnect(true);
-    WiFi.mode(WIFI_STA);
-    Serial.printf("[wifi] conectado a '%s', IP: %s — AP apagado\n",
-                  settings.wifiSsid.c_str(),
-                  WiFi.localIP().toString().c_str());
-    String host = hostSlug();   // sigue al "Nombre del dispositivo" de Config
-    if (MDNS.begin(host.c_str())) {
-        MDNS.addService("http", "tcp", 80);
-        Serial.printf("[mdns] http://%s.local\n", host.c_str());
+    const WifiNet& net = settings.wifi[wifiCand[wifiCandIdx]];
+    Serial.printf("[wifi] intentando '%s' (%u/%u)...\n", net.ssid.c_str(),
+                  wifiCandIdx + 1, wifiCandCount);
+    WiFi.begin(net.ssid.c_str(), net.pass.c_str());
+    wifiDeadlineMs = millis() + 12000;
+    wifiState = WifiState::CONNECTING;
+}
+
+static void wifiBegin()
+{
+    WiFi.setHostname(hostSlug().c_str());
+    WiFi.setAutoReconnect(true);
+    apEnable();
+    wifiState = WifiState::IDLE;
+    wifiNextScanMs = millis();      // escanear ya mismo
+}
+
+static void wifiTick()
+{
+    uint32_t now = millis();
+
+    switch (wifiState) {
+        case WifiState::IDLE:
+            if (settings.wifiCount > 0 && now >= wifiNextScanMs) {
+                WiFi.scanNetworks(true);    // async
+                wifiState = WifiState::SCANNING;
+            }
+            break;
+
+        case WifiState::SCANNING: {
+            int n = WiFi.scanComplete();
+            if (n == WIFI_SCAN_RUNNING) return;
+            wifiCandCount = 0;
+            if (n > 0) {
+                // candidatas = redes guardadas presentes, por señal descendente
+                struct { int8_t idx; int32_t rssi; } found[WIFI_MAX_NETWORKS];
+                uint8_t nf = 0;
+                for (int i = 0; i < n; i++) {
+                    String ssid = WiFi.SSID(i);
+                    for (uint8_t k = 0; k < settings.wifiCount; k++) {
+                        if (settings.wifi[k].ssid != ssid) continue;
+                        bool dup = false;
+                        for (uint8_t f = 0; f < nf; f++) {
+                            if (found[f].idx == (int8_t)k) { dup = true; break; }
+                        }
+                        if (!dup && nf < WIFI_MAX_NETWORKS) {
+                            found[nf].idx = k;
+                            found[nf].rssi = WiFi.RSSI(i);
+                            nf++;
+                        }
+                    }
+                }
+                for (uint8_t a = 0; a < nf; a++)        // orden por RSSI desc
+                    for (uint8_t b = a + 1; b < nf; b++)
+                        if (found[b].rssi > found[a].rssi) {
+                            auto t = found[a]; found[a] = found[b]; found[b] = t;
+                        }
+                for (uint8_t a = 0; a < nf; a++) wifiCand[a] = found[a].idx;
+                wifiCandCount = nf;
+            }
+            WiFi.scanDelete();
+
+            if (wifiCandCount > 0) {
+                wifiCandIdx = 0;
+                wifiTryCandidate();
+            } else {
+                wifiNextScanMs = now + 30000;   // nada conocido: reintentar
+                wifiState = WifiState::IDLE;
+            }
+            break;
+        }
+
+        case WifiState::CONNECTING:
+            if (WiFi.status() == WL_CONNECTED) {
+                apMode = false;                 // conectado: AP afuera
+                dnsServer.stop();
+                WiFi.softAPdisconnect(true);
+                WiFi.mode(WIFI_STA);
+                staLostSinceMs = 0;
+                Serial.printf("[wifi] conectado a '%s', IP: %s — AP apagado\n",
+                              WiFi.SSID().c_str(),
+                              WiFi.localIP().toString().c_str());
+                MDNS.end();
+                String host = hostSlug();
+                if (MDNS.begin(host.c_str())) {
+                    MDNS.addService("http", "tcp", 80);
+                    Serial.printf("[mdns] http://%s.local\n", host.c_str());
+                }
+                wifiState = WifiState::CONNECTED;
+            } else if (now >= wifiDeadlineMs) {
+                wifiCandIdx++;
+                if (wifiCandIdx < wifiCandCount) {
+                    wifiTryCandidate();         // probar la siguiente
+                } else {
+                    WiFi.disconnect();
+                    wifiNextScanMs = now + 30000;
+                    wifiState = WifiState::IDLE;
+                }
+            }
+            break;
+
+        case WifiState::CONNECTED:
+            if (WiFi.status() == WL_CONNECTED) {
+                staLostSinceMs = 0;
+            } else if (staLostSinceMs == 0) {
+                staLostSinceMs = now;           // blip: autoReconnect intenta
+            } else if (now - staLostSinceMs > 20000) {
+                // te fuiste del alcance: AP de vuelta + ciclo de escaneo
+                Serial.println("[wifi] red perdida — AP de vuelta, re-escaneando");
+                staLostSinceMs = 0;
+                WiFi.disconnect();
+                apEnable();
+                wifiNextScanMs = now + 3000;
+                wifiState = WifiState::IDLE;
+            }
+            break;
     }
 }
 
@@ -311,7 +415,10 @@ static void setupRoutes()
 
     server.on("/api/config", HTTP_GET, [](AsyncWebServerRequest* req) {
         JsonDocument doc;
-        doc["ssid"] = settings.wifiSsid;
+        JsonArray nets = doc["networks"].to<JsonArray>();
+        for (uint8_t i = 0; i < settings.wifiCount; i++) {
+            nets.add(settings.wifi[i].ssid);   // sin passwords
+        }
         doc["name"] = settings.deviceName;
         doc["sep"] = String(settings.decimalSep);
         doc["eol"] = (uint8_t)settings.eolKey;
@@ -327,9 +434,25 @@ static void setupRoutes()
     auto* cfgHandler = new AsyncCallbackJsonWebHandler(
         "/api/config", [](AsyncWebServerRequest* req, JsonVariant& json) {
             JsonObject o = json.as<JsonObject>();
-            if (o["ssid"].is<const char*>()) settings.wifiSsid = o["ssid"].as<String>();
-            if (o["pass"].is<const char*>() && strlen(o["pass"]) > 0)
-                settings.wifiPass = o["pass"].as<String>();
+            if (o["wifi"].is<JsonArray>()) {
+                // lista completa de redes; pass vacía = conservar la guardada
+                JsonArray arr = o["wifi"].as<JsonArray>();
+                WifiNet nuevo[WIFI_MAX_NETWORKS];
+                uint8_t n = 0;
+                for (JsonObject w : arr) {
+                    if (n >= WIFI_MAX_NETWORKS) break;
+                    const char* ssid = w["ssid"];
+                    if (!ssid || !strlen(ssid)) continue;
+                    const char* pass = w["pass"];
+                    nuevo[n].ssid = ssid;
+                    nuevo[n].pass = (pass && strlen(pass))
+                                        ? String(pass)
+                                        : settings.passFor(ssid);
+                    n++;
+                }
+                for (uint8_t i = 0; i < n; i++) settings.wifi[i] = nuevo[i];
+                settings.wifiCount = n;
+            }
             if (o["name"].is<const char*>() && strlen(o["name"]) > 0)
                 settings.deviceName = o["name"].as<String>();
             if (o["sep"].is<const char*>()) {
@@ -470,7 +593,7 @@ void webserverBegin()
 
 void webserverLoop()
 {
-    wifiPoll();
+    wifiTick();
     if (apMode) dnsServer.processNextRequest();
     static uint32_t lastClean = 0;
     if (millis() - lastClean > 1000) {
