@@ -149,12 +149,24 @@ $env:PYTHONUTF8 = "1"
   `send(200, tipo, (const uint8_t*)PTR, strlen(PTR))` — la sobrecarga con
   `const char*`/String COPIA todo al heap por request; con varios clientes
   el heap tocó 2 KB (minHeap) y corrompía respuestas (scrambling).
-- WiFi multi-red (hasta 10 en NVS, `settings.wifi[]`): AP instantáneo al
-  boot (~2 s) + máquina de estados `wifiTick()` en webserverLoop — escanea,
-  conecta a la guardada con mejor RSSI, prueba candidatas en orden, AP se
-  apaga al conectar y VUELVE si se pierde la red >20 s (roaming
-  casa/trabajo/hotspot). Migración automática del formato viejo de 1 red.
-  El POST /api/config recibe `wifi: [{ssid, pass}]` (pass vacía = conservar).
+- WiFi multi-red (hasta 10 en NVS, `settings.wifi[]`), máquina de estados
+  `wifiTick()` en webserverLoop. **Reglas críticas (1 sola radio en el C3):**
+  - El **SoftAP queda SIEMPRE prendido** (AP_STA); nunca `softAPdisconnect`.
+    Al conectar la STA solo se baja el portal cautivo (`captivePortalOff`).
+    Así el hotspot no "desaparece" y el equipo es alcanzable por AP+LAN.
+  - **No escanear ni conectar STA mientras hay cliente en el AP**
+    (`softAPgetStationNum()>0`): escanear salta de canal y conectar mueve el
+    AP de canal → echarían al usuario que está configurando. Esto causaba el
+    bug de "el hotspot se desconecta a los 30s" (roam-scan conectaba a casa
+    y tiraba el AP).
+  - **Escaneo de UI** (`/api/wifi/scan` → `uiScanPending`) separado del de
+    roaming: solo cachea, NUNCA conecta. Un scan estando conectado tira la
+    STA ~2 s; se recupera con `WiFi.reconnect()` inmediato + nudge cada 5 s
+    en estado CONNECTED (recupera en 4-6 s, antes quedaba caída para siempre).
+  - Caché de scan 15 s. POST /api/config recibe `wifi: [{ssid, pass}]`
+    (pass vacía = conservar la guardada). Migración del formato viejo de 1 red.
+  - ⚠️ UI: "Guardar" debe llamar `addWifi(true)` primero para recoger un SSID
+    tipeado a mano que no se "Agregó" (si no, se pierde — era un bug).
 - `GET /llms.txt`: guía para asistentes IA (API + flujo de sesiones) — un
   LLM con solo HTTP puede autodescubrir el dispositivo. La vista Ayuda de la
   UI tiene un botón que la copia al portapapeles.

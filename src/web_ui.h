@@ -501,11 +501,11 @@ function renderWifi(){
     tb.innerHTML='<tr><td style="color:var(--dim)">sin redes guardadas — el equipo queda en modo hotspot</td></tr>';
   }
 }
-function addWifi(){
+function addWifi(silent){
   const s=document.getElementById('wifiSsidNew'), p=document.getElementById('wifiPassNew');
   const ssid=s.value.trim();
-  if(!ssid){ toast('Escribí el SSID'); return; }
-  if(cfgWifi.length>=10){ toast('Máximo 10 redes'); return; }
+  if(!ssid){ if(!silent) toast('Escribí el SSID'); return; }
+  if(cfgWifi.length>=10){ if(!silent) toast('Máximo 10 redes'); return; }
   const i=cfgWifi.findIndex(w=>w.ssid===ssid);
   if(i>=0) cfgWifi[i].pass=p.value;       // re-agregar = actualizar pass
   else cfgWifi.push({ssid:ssid,pass:p.value});
@@ -524,8 +524,8 @@ function pollScan(){
   fetch('/api/wifi/scan').then(r=>r.json()).then(j=>{
     const btn=document.getElementById('scanBtn'), list=document.getElementById('scanList');
     if(j.scanning){
-      if(++scanTries>12){ list.innerHTML='<div style="padding:10px;color:var(--bad)">No se pudo escanear</div>'; btn.disabled=false; return; }
-      setTimeout(pollScan,1000); return;
+      if(++scanTries>15){ list.innerHTML='<div style="padding:10px;color:var(--bad)">No se pudo escanear</div>'; btn.disabled=false; return; }
+      setTimeout(pollScan,1200); return;
     }
     btn.disabled=false;
     const nets=j.networks||[];
@@ -548,7 +548,13 @@ function pollScan(){
       div.onmouseleave=()=>div.style.background='';
       list.appendChild(div);
     });
-  }).catch(()=>{ document.getElementById('scanBtn').disabled=false; });
+  }).catch(()=>{
+    // escanear desde el hotspot puede cortar la conexión un instante (una
+    // sola radio): reintentar en vez de abandonar — el AP vuelve solo.
+    if(++scanTries>15){ document.getElementById('scanBtn').disabled=false;
+      document.getElementById('scanList').innerHTML='<div style="padding:10px;color:var(--dim)">Reconectate al hotspot y volvé a tocar Buscar</div>'; return; }
+    setTimeout(pollScan,1200);
+  });
 }
 function loadCfg(){
   fetch('/api/config').then(r=>r.json()).then(j=>{
@@ -565,12 +571,14 @@ function loadCfg(){
 function saveCfg(ev){
   ev.preventDefault();
   const f=ev.target;
+  addWifi(true);   // recoger un SSID escrito a mano que no se "Agregó" aún
   const body={wifi:cfgWifi.map(w=>({ssid:w.ssid,pass:w.pass===null?'':w.pass})),
               name:f.name.value,sep:f.sep.value,
               eol:+f.eol.value,ble:f.ble.value==='1',rmode:+f.rmode.value,inv:f.inv.value==='1'};
   cfgSep=f.sep.value;
   fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-    .then(()=>toast('Guardado. Reiniciá para aplicar WiFi/BLE.'));
+    .then(r=>r.ok?toast('Guardado. Reiniciá para aplicar los cambios de WiFi/BLE.')
+                 :toast('Error al guardar'));
 }
 
 /* ---------- refresco del chip de sesión en vivo ---------- */

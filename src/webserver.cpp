@@ -24,19 +24,26 @@ static bool apMode = false;
 bool webserverInApMode() { return apMode; }
 
 // ---------------------------------------------------------------------------
-// WiFi multi-red con roaming:
-//  - AP "Calibre-ESP" instantáneo (~2 s) SIEMPRE al encender.
-//  - Escanea y se conecta a la red GUARDADA con mejor señal (hasta 10:
-//    casa, trabajo, hotspot del celu...). Si falla una, prueba la próxima.
-//  - Sin redes al alcance: queda el AP y re-escanea cada 30 s.
-//  - Conectado: el AP se apaga. Si se pierde la red >20 s (te fuiste),
-//    vuelve el AP y arranca el ciclo de escaneo de nuevo.
+// WiFi multi-red con roaming. Claves del diseño (ESP32-C3 = una sola radio):
+//  - El AP "Calibre-ESP" queda SIEMPRE encendido (AP_STA). Nunca se apaga,
+//    así el hotspot no "desaparece"; cuando la STA conecta solo se baja el
+//    portal cautivo. El dispositivo es alcanzable por AP (192.168.4.1) y LAN.
+//  - NO se escanea ni se intenta conectar la STA mientras hay un cliente en
+//    el hotspot (softAPgetStationNum>0): escanear salta de canal y conectar
+//    mueve el AP de canal — ambos echarían al usuario que está configurando.
+//  - Escaneo de UI (botón "Buscar redes") separado del de roaming: el de UI
+//    solo cachea resultados, NUNCA conecta (no tira el AP).
+//  - Sin redes guardadas al alcance: re-escaneo cada 30 s (solo si el AP está
+//    libre). Si se pierde la red conectada >20 s, vuelve el portal cautivo.
 // ---------------------------------------------------------------------------
 enum class WifiState : uint8_t { IDLE, SCANNING, CONNECTING, CONNECTED };
 
 static WifiState wifiState = WifiState::IDLE;
 static uint32_t wifiNextScanMs = 0;
 static uint32_t wifiDeadlineMs = 0;
+static bool     scanForUi = false;       // el escaneo en curso es solo para la UI
+static bool     uiScanPending = false;   // la UI pidió un escaneo
+static bool     uiScanWasConnected = false;  // había STA antes del escaneo de UI
 // caché del último escaneo (para el selector de redes de la UI)
 static String   scanCacheJson;
 static uint32_t scanCacheMs = 0;
@@ -44,6 +51,7 @@ static int8_t   wifiCand[WIFI_MAX_NETWORKS];   // índices a settings.wifi
 static uint8_t  wifiCandCount = 0;
 static uint8_t  wifiCandIdx = 0;
 static uint32_t staLostSinceMs = 0;
+static bool     mdnsUp = false;
 
 // Slug del nombre del dispositivo para hostname/mDNS: minúsculas, solo
 // [a-z0-9-]. "Calibre-ESP" -> "calibre-esp" -> http://calibre-esp.local
@@ -62,15 +70,31 @@ static String hostSlug()
     return out;
 }
 
-static void apEnable()
+// Levanta el portal cautivo (DNS que redirige todo al dispositivo). El AP en
+// sí ya está prendido desde wifiBegin y nunca se apaga.
+static void captivePortalOn()
 {
     if (apMode) return;
     apMode = true;
-    WiFi.mode(WIFI_AP_STA);
-    WiFi.softAP(AP_SSID, AP_PASS);
-    dnsServer.start(53, "*", WiFi.softAPIP());      // portal cautivo
-    Serial.printf("[wifi] AP '%s' listo, IP: %s\n", AP_SSID,
-                  WiFi.softAPIP().toString().c_str());
+    dnsServer.start(53, "*", WiFi.softAPIP());
+}
+
+static void captivePortalOff()
+{
+    if (!apMode) return;
+    apMode = false;
+    dnsServer.stop();
+}
+
+static void mdnsStart()
+{
+    if (mdnsUp) MDNS.end();
+    String host = hostSlug();
+    if (MDNS.begin(host.c_str())) {
+        MDNS.addService("http", "tcp", 80);
+        mdnsUp = true;
+        Serial.printf("[mdns] http://%s.local\n", host.c_str());
+    }
 }
 
 // Serializa los resultados de un escaneo terminado a la caché JSON:
@@ -131,8 +155,17 @@ static void wifiTryCandidate()
 static void wifiBegin()
 {
     WiFi.setHostname(hostSlug().c_str());
+    WiFi.persistent(false);
     WiFi.setAutoReconnect(true);
-    apEnable();
+
+    // AP siempre encendido (no se apaga nunca) + portal cautivo
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.softAP(AP_SSID, AP_PASS);
+    apMode = true;
+    dnsServer.start(53, "*", WiFi.softAPIP());
+    Serial.printf("[wifi] AP '%s' listo, IP: %s\n", AP_SSID,
+                  WiFi.softAPIP().toString().c_str());
+
     wifiState = WifiState::IDLE;
     wifiNextScanMs = millis();      // escanear ya mismo
 }
@@ -140,21 +173,45 @@ static void wifiBegin()
 static void wifiTick()
 {
     uint32_t now = millis();
+    bool staUp = WiFi.status() == WL_CONNECTED;
+    bool apBusy = WiFi.softAPgetStationNum() > 0;   // alguien usando el hotspot
+
+    // Escaneo de UI pendiente: lanzable desde IDLE o CONNECTED (no a mitad de
+    // un escaneo/conexión). Solo cachea resultados, NUNCA conecta. Un escaneo
+    // estando conectado puede tirar la STA un instante (una sola radio): se
+    // recuerda para reconectar enseguida al terminar.
+    if (uiScanPending && (wifiState == WifiState::IDLE ||
+                          wifiState == WifiState::CONNECTED)) {
+        uiScanPending = false;
+        scanForUi = true;
+        uiScanWasConnected = staUp;
+        WiFi.scanNetworks(true);
+        wifiState = WifiState::SCANNING;
+        return;
+    }
 
     switch (wifiState) {
-        case WifiState::IDLE:
-            if (settings.wifiCount > 0 && now >= wifiNextScanMs) {
-                WiFi.scanNetworks(true);    // async
+        case WifiState::IDLE: {
+            // Escaneo de roaming: solo si el AP está libre y aún no conectados.
+            bool roam = settings.wifiCount > 0 && !staUp && !apBusy &&
+                        now >= wifiNextScanMs;
+            if (roam) {
+                scanForUi = false;
+                WiFi.scanNetworks(true);
                 wifiState = WifiState::SCANNING;
+            } else if (staUp) {
+                wifiState = WifiState::CONNECTED;   // ya conectado (p.ej. tras boot)
             }
             break;
+        }
 
         case WifiState::SCANNING: {
             int n = WiFi.scanComplete();
             if (n == WIFI_SCAN_RUNNING) return;
             if (n >= 0) wifiCacheScan(n);   // alimentar el selector de la UI
+
             wifiCandCount = 0;
-            if (n > 0) {
+            if (n > 0 && !scanForUi) {
                 // candidatas = redes guardadas presentes, por señal descendente
                 struct { int8_t idx; int32_t rssi; } found[WIFI_MAX_NETWORKS];
                 uint8_t nf = 0;
@@ -163,9 +220,8 @@ static void wifiTick()
                     for (uint8_t k = 0; k < settings.wifiCount; k++) {
                         if (settings.wifi[k].ssid != ssid) continue;
                         bool dup = false;
-                        for (uint8_t f = 0; f < nf; f++) {
+                        for (uint8_t f = 0; f < nf; f++)
                             if (found[f].idx == (int8_t)k) { dup = true; break; }
-                        }
                         if (!dup && nf < WIFI_MAX_NETWORKS) {
                             found[nf].idx = k;
                             found[nf].rssi = WiFi.RSSI(i);
@@ -173,7 +229,7 @@ static void wifiTick()
                         }
                     }
                 }
-                for (uint8_t a = 0; a < nf; a++)        // orden por RSSI desc
+                for (uint8_t a = 0; a < nf; a++)
                     for (uint8_t b = a + 1; b < nf; b++)
                         if (found[b].rssi > found[a].rssi) {
                             auto t = found[a]; found[a] = found[b]; found[b] = t;
@@ -183,7 +239,19 @@ static void wifiTick()
             }
             WiFi.scanDelete();
 
-            if (wifiCandCount > 0) {
+            // escaneo de UI: NO conectar candidatas (no tirar el AP). Pero si
+            // el escaneo cortó la STA que teníamos, reconectar YA.
+            if (scanForUi) {
+                scanForUi = false;
+                if (uiScanWasConnected && !staUp) {
+                    WiFi.reconnect();
+                    staLostSinceMs = now;
+                    wifiState = WifiState::CONNECTED;   // su lógica reconecta
+                } else {
+                    wifiState = staUp ? WifiState::CONNECTED : WifiState::IDLE;
+                    wifiNextScanMs = now + 30000;
+                }
+            } else if (wifiCandCount > 0 && !apBusy) {
                 wifiCandIdx = 0;
                 wifiTryCandidate();
             } else {
@@ -194,21 +262,13 @@ static void wifiTick()
         }
 
         case WifiState::CONNECTING:
-            if (WiFi.status() == WL_CONNECTED) {
-                apMode = false;                 // conectado: AP afuera
-                dnsServer.stop();
-                WiFi.softAPdisconnect(true);
-                WiFi.mode(WIFI_STA);
+            if (staUp) {
+                captivePortalOff();             // baja el portal; AP sigue prendido
                 staLostSinceMs = 0;
-                Serial.printf("[wifi] conectado a '%s', IP: %s — AP apagado\n",
+                Serial.printf("[wifi] conectado a '%s', IP: %s\n",
                               WiFi.SSID().c_str(),
                               WiFi.localIP().toString().c_str());
-                MDNS.end();
-                String host = hostSlug();
-                if (MDNS.begin(host.c_str())) {
-                    MDNS.addService("http", "tcp", 80);
-                    Serial.printf("[mdns] http://%s.local\n", host.c_str());
-                }
+                mdnsStart();
                 wifiState = WifiState::CONNECTED;
             } else if (now >= wifiDeadlineMs) {
                 wifiCandIdx++;
@@ -222,21 +282,31 @@ static void wifiTick()
             }
             break;
 
-        case WifiState::CONNECTED:
-            if (WiFi.status() == WL_CONNECTED) {
+        case WifiState::CONNECTED: {
+            static uint32_t lastReconnectNudge = 0;
+            if (staUp) {
                 staLostSinceMs = 0;
-            } else if (staLostSinceMs == 0) {
-                staLostSinceMs = now;           // blip: autoReconnect intenta
-            } else if (now - staLostSinceMs > 20000) {
-                // te fuiste del alcance: AP de vuelta + ciclo de escaneo
-                Serial.println("[wifi] red perdida — AP de vuelta, re-escaneando");
-                staLostSinceMs = 0;
-                WiFi.disconnect();
-                apEnable();
-                wifiNextScanMs = now + 3000;
-                wifiState = WifiState::IDLE;
+                if (apMode) captivePortalOff();   // por si volvió tras un blip
+            } else {
+                if (staLostSinceMs == 0) {
+                    staLostSinceMs = now;
+                    WiFi.reconnect();             // nudge inmediato
+                    lastReconnectNudge = now;
+                } else if (now - lastReconnectNudge > 5000) {
+                    WiFi.reconnect();             // reintento activo cada 5 s
+                    lastReconnectNudge = now;
+                }
+                if (now - staLostSinceMs > 25000) {
+                    // realmente fuera de alcance: portal cautivo + re-escaneo
+                    Serial.println("[wifi] red perdida — portal cautivo de vuelta");
+                    staLostSinceMs = 0;
+                    captivePortalOn();
+                    wifiNextScanMs = now + 3000;
+                    wifiState = WifiState::IDLE;
+                }
             }
             break;
+        }
     }
 }
 
@@ -259,7 +329,9 @@ static void buildStatusJson(JsonDocument& doc)
     doc["dataMv"] = d.dataMv;
     doc["ble"] = bleKeyboard.isConnected();
     doc["rel"] = appRelativeActive();
-    doc["ap"] = apMode;
+    doc["ap"] = apMode;               // portal cautivo activo
+    doc["apOn"] = true;               // el SoftAP siempre está prendido
+    doc["apClients"] = WiFi.softAPgetStationNum();
     doc["rssi"] = WiFi.RSSI();
     doc["heap"] = ESP.getFreeHeap();
     doc["minHeap"] = ESP.getMinFreeHeap();
@@ -466,22 +538,14 @@ static void setupRoutes()
     // fresca; si no, dispara un escaneo (compartido con la máquina de estados
     // cuando está en modo AP) y el cliente repite hasta tener resultados.
     server.on("/api/wifi/scan", HTTP_GET, [](AsyncWebServerRequest* req) {
-        if (scanCacheMs && millis() - scanCacheMs < 12000) {
+        // caché fresca: devolverla (no re-escanear, no molestar al AP)
+        if (scanCacheMs && millis() - scanCacheMs < 15000) {
             req->send(200, "application/json", scanCacheJson);
             return;
         }
-        if (wifiState == WifiState::CONNECTED) {
-            int n = WiFi.scanComplete();
-            if (n >= 0) {
-                wifiCacheScan(n);
-                WiFi.scanDelete();
-                req->send(200, "application/json", scanCacheJson);
-                return;
-            }
-            if (n != WIFI_SCAN_RUNNING) WiFi.scanNetworks(true);
-        } else {
-            wifiNextScanMs = 0;   // forzar que el ciclo escanee ya
-        }
+        // pedir un escaneo de UI: el ciclo lo hace y SOLO cachea (no conecta,
+        // no tira el AP). Funciona igual en modo hotspot o conectado.
+        uiScanPending = true;
         req->send(200, "application/json", "{\"scanning\":true}");
     });
 
