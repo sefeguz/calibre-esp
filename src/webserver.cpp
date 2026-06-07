@@ -31,9 +31,26 @@ bool webserverInApMode() { return apMode; }
 // ---------------------------------------------------------------------------
 static bool staPending = false;   // esperando que la STA conecte
 
+// Slug del nombre del dispositivo para hostname/mDNS: minúsculas, solo
+// [a-z0-9-]. "Calibre-ESP" -> "calibre-esp" -> http://calibre-esp.local
+static String hostSlug()
+{
+    String s = settings.deviceName;
+    s.toLowerCase();
+    String out;
+    for (size_t i = 0; i < s.length(); i++) {
+        char c = s[i];
+        if (isalnum((unsigned char)c)) out += c;
+        else if (out.length() && out[out.length() - 1] != '-') out += '-';
+    }
+    while (out.length() && out[out.length() - 1] == '-') out.remove(out.length() - 1);
+    if (!out.length()) out = MDNS_NAME;
+    return out;
+}
+
 static void wifiBegin()
 {
-    WiFi.setHostname(settings.deviceName.c_str());
+    WiFi.setHostname(hostSlug().c_str());
 
     apMode = true;
     WiFi.mode(WIFI_AP_STA);
@@ -63,9 +80,10 @@ static void wifiPoll()
     Serial.printf("[wifi] conectado a '%s', IP: %s — AP apagado\n",
                   settings.wifiSsid.c_str(),
                   WiFi.localIP().toString().c_str());
-    if (MDNS.begin(MDNS_NAME)) {
+    String host = hostSlug();   // sigue al "Nombre del dispositivo" de Config
+    if (MDNS.begin(host.c_str())) {
         MDNS.addService("http", "tcp", 80);
-        Serial.printf("[mdns] http://%s.local\n", MDNS_NAME);
+        Serial.printf("[mdns] http://%s.local\n", host.c_str());
     }
 }
 

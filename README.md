@@ -6,7 +6,7 @@ mediciones por:
 
 - **WiFi**: interfaz web (modo claro/oscuro, mobile-friendly) con display en
   vivo, **sesiones de medición guiada**, capturas, export CSV y configuración
-  (`http://calibre.local`)
+  (`http://calibre-esp.local`)
 - **Bluetooth LE**: actúa como **teclado HID** — al presionar el botón físico
   "tipea" la medición + Enter en la PC/celular emparejado (ideal para cargar
   planillas)
@@ -77,8 +77,9 @@ pio device monitor
    modo de lectura y el stream de mediciones.
 2. El equipo levanta el AP WiFi **`Calibre-ESP`** (clave `calibre123`). Conectate
    y el portal cautivo te lleva a la configuración: cargá tu red WiFi y guardá.
-3. Tras reiniciar queda en tu red: **`http://calibre.local`** (o la IP que
-   muestra el serial).
+3. Tras reiniciar queda en tu red: **`http://calibre-esp.local`** (o la IP que
+   muestra el serial). El nombre mDNS sigue al "Nombre del dispositivo" de la
+   configuración (sanitizado: "Calibre-ESP" → `calibre-esp.local`).
 4. Para el teclado BLE: en la PC/celular buscá dispositivos Bluetooth y
    emparejá **`Calibre-ESP`**. Abrí cualquier campo de texto/Excel y presioná
    el botón físico: aparece la medición + Enter.
@@ -91,12 +92,12 @@ pio device monitor
 | Botón largo (1.5 s) | Zero relativo on/off (medir diferencias) |
 | Web: Capturar / Zero / Hold / mm⇄in | Lo mismo desde el navegador |
 | Web: Exportar CSV | Descarga las capturas (formato Excel ES: `;` y coma decimal) |
-| `http://calibre.local/update` | Actualización de firmware OTA |
+| `http://calibre-esp.local/update` | Actualización de firmware OTA |
 
 ### Configuración (web)
 
 - **Separador decimal** del teclado BLE: `,` (default, Excel en español) o `.`
-- **Tecla final**: Enter / Tab / ninguna
+- **Tecla final**: Enter / Tab / Espacio / ninguna
 - **Modo de lectura**: auto / digital (3 V) / ADC (1.5 V)
 - **Señal invertida**: para el level-shifter NPN
 

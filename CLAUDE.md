@@ -21,9 +21,10 @@ El equipo está montado en un case impreso en 3D.
   soldados; si se recablea, ajustar `PIN_CALIPER_*` en `include/config.h`).
   GND común, VCC del calibre SIN conectar. Botón = BOOT onboard (GPIO9).
   LED = GPIO8 (invertido).
-- En la red del usuario: **http://192.168.1.43** (`calibre.local` NO resuelve
-  desde su PC Windows; sí suele andar desde celulares). AP fallback:
-  `Calibre-ESP` / `calibre123`.
+- En la red del usuario: **http://192.168.1.43** o **http://calibre-esp.local**
+  (el mDNS se deriva del "Nombre del dispositivo" de Config, sanitizado;
+  verificado resolviendo desde su PC). AP `Calibre-ESP`/`calibre123`
+  disponible ~2 s tras encender, se apaga solo al conectar la STA.
 
 ## Protocolo (verificado en esta unidad)
 

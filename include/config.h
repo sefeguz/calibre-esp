@@ -2,7 +2,7 @@
 // Tarjeta objetivo: ESP32-C3 (SuperMini / DevKitM-1)
 #pragma once
 
-#define FIRMWARE_VERSION "1.3.0"
+#define FIRMWARE_VERSION "1.3.1"
 #define DEVICE_NAME_DEFAULT "Calibre-ESP"
 
 // ---------------------------------------------------------------------------
@@ -52,7 +52,9 @@
 // ---------------------------------------------------------------------------
 #define AP_SSID      "Calibre-ESP"
 #define AP_PASS      "calibre123"
-#define MDNS_NAME    "calibre"          // http://calibre.local
+#define MDNS_NAME    "calibre"          // fallback si el nombre configurado
+                                        // queda vacío; el mDNS real se deriva
+                                        // del "Nombre del dispositivo"
 #define WIFI_CONNECT_TIMEOUT_MS 30000
 
 // ---------------------------------------------------------------------------
