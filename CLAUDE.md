@@ -154,11 +154,15 @@ $env:PYTHONUTF8 = "1"
   - El **SoftAP queda SIEMPRE prendido** (AP_STA); nunca `softAPdisconnect`.
     Al conectar la STA solo se baja el portal cautivo (`captivePortalOff`).
     Así el hotspot no "desaparece" y el equipo es alcanzable por AP+LAN.
-  - **No escanear ni conectar STA mientras hay cliente en el AP**
-    (`softAPgetStationNum()>0`): escanear salta de canal y conectar mueve el
-    AP de canal → echarían al usuario que está configurando. Esto causaba el
-    bug de "el hotspot se desconecta a los 30s" (roam-scan conectaba a casa
-    y tiraba el AP).
+  - El roaming SÍ corre aunque haya cliente en el AP (el AP nunca se apaga,
+    solo hay un parpadeo de canal al conectar). NO bloquear por `apBusy`:
+    un celular pegado al hotspot impediría que el equipo se conecte a la red
+    recién configurada (bug v1.5.1, corregido en v1.5.2). El bug original de
+    "el hotspot se desconecta a los 30s" lo arregla el AP-siempre-prendido.
+  - Guardar config con redes nuevas → reconexión inmediata: el handler
+    setea `wifiReapplyPending` y `wifiTick` suelta la STA y re-evalúa DESPUÉS
+    de ~1.2 s (NO en el handler: `WiFi.disconnect()` ahí corta la respuesta
+    HTTP en curso y el cliente recibe un error).
   - **Escaneo de UI** (`/api/wifi/scan` → `uiScanPending`) separado del de
     roaming: solo cachea, NUNCA conecta. Un scan estando conectado tira la
     STA ~2 s; se recupera con `WiFi.reconnect()` inmediato + nudge cada 5 s

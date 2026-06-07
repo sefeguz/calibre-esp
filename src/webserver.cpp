@@ -44,6 +44,7 @@ static uint32_t wifiDeadlineMs = 0;
 static bool     scanForUi = false;       // el escaneo en curso es solo para la UI
 static bool     uiScanPending = false;   // la UI pidió un escaneo
 static bool     uiScanWasConnected = false;  // había STA antes del escaneo de UI
+static bool     wifiReapplyPending = false;  // releer redes y reconectar (tras guardar)
 // caché del último escaneo (para el selector de redes de la UI)
 static String   scanCacheJson;
 static uint32_t scanCacheMs = 0;
@@ -176,6 +177,23 @@ static void wifiTick()
     bool staUp = WiFi.status() == WL_CONNECTED;
     bool apBusy = WiFi.softAPgetStationNum() > 0;   // alguien usando el hotspot
 
+    // Reaplicar redes tras un guardado: soltar la STA y re-evaluar para
+    // conectar a la mejor guardada (la respuesta HTTP ya se envió, así que
+    // ahora es seguro cortar la STA). Se da ~1.2 s para que el cliente reciba.
+    if (wifiReapplyPending) {
+        static uint32_t reapplyAt = 0;
+        if (reapplyAt == 0) { reapplyAt = now + 1200; }
+        else if (now >= reapplyAt) {
+            reapplyAt = 0;
+            wifiReapplyPending = false;
+            if (staUp) WiFi.disconnect();
+            wifiNextScanMs = now;
+            wifiState = WifiState::IDLE;
+            return;
+        }
+    }
+    (void)apBusy;
+
     // Escaneo de UI pendiente: lanzable desde IDLE o CONNECTED (no a mitad de
     // un escaneo/conexión). Solo cachea resultados, NUNCA conecta. Un escaneo
     // estando conectado puede tirar la STA un instante (una sola radio): se
@@ -193,8 +211,12 @@ static void wifiTick()
     switch (wifiState) {
         case WifiState::IDLE: {
             // Escaneo de roaming: solo si el AP está libre y aún no conectados.
-            bool roam = settings.wifiCount > 0 && !staUp && !apBusy &&
-                        now >= wifiNextScanMs;
+            // Roamear (escanear + conectar a la guardada con mejor señal) aun
+            // si hay un cliente en el hotspot: como el AP nunca se apaga, lo
+            // peor es un parpadeo del AP al cambiar de canal — NO bloquearlo,
+            // si no un celular pegado al hotspot impediría que el equipo se
+            // conecte a la red que el usuario acaba de configurar.
+            bool roam = settings.wifiCount > 0 && !staUp && now >= wifiNextScanMs;
             if (roam) {
                 scanForUi = false;
                 WiFi.scanNetworks(true);
@@ -251,9 +273,9 @@ static void wifiTick()
                     wifiState = staUp ? WifiState::CONNECTED : WifiState::IDLE;
                     wifiNextScanMs = now + 30000;
                 }
-            } else if (wifiCandCount > 0 && !apBusy) {
+            } else if (wifiCandCount > 0) {
                 wifiCandIdx = 0;
-                wifiTryCandidate();
+                wifiTryCandidate();             // conectar (AP sigue prendido)
             } else {
                 wifiNextScanMs = now + 30000;   // nada conocido: reintentar
                 wifiState = WifiState::IDLE;
@@ -570,7 +592,9 @@ static void setupRoutes()
     auto* cfgHandler = new AsyncCallbackJsonWebHandler(
         "/api/config", [](AsyncWebServerRequest* req, JsonVariant& json) {
             JsonObject o = json.as<JsonObject>();
+            bool wifiChanged = false;
             if (o["wifi"].is<JsonArray>()) {
+                wifiChanged = true;
                 // lista completa de redes; pass vacía = conservar la guardada
                 JsonArray arr = o["wifi"].as<JsonArray>();
                 WifiNet nuevo[WIFI_MAX_NETWORKS];
@@ -600,6 +624,10 @@ static void setupRoutes()
             if (o["rmode"].is<int>()) settings.readMode = constrain(o["rmode"].as<int>(), 0, 2);
             if (o["inv"].is<bool>()) settings.invert = o["inv"];
             settings.save();
+            // si cambió la lista de redes, reconectar a la mejor guardada —
+            // pero NO acá (desconectar la STA cortaría esta misma respuesta
+            // HTTP): se difiere a wifiTick vía flag, que corre tras enviar.
+            if (wifiChanged) wifiReapplyPending = true;
             req->send(200, "application/json", "{\"ok\":true}");
         });
     server.addHandler(cfgHandler);
