@@ -144,6 +144,16 @@ $env:PYTHONUTF8 = "1"
 - ⚠️ `AsyncCallbackJsonWebHandler` matchea por PREFIJO de URL: registrar las
   rutas específicas (`/api/session/select`) ANTES que la genérica
   (`/api/session`), si no la genérica se las traga y devuelve 400.
+- ⚠️ Contenido grande (la UI, ~28 KB) SIEMPRE con
+  `send(200, tipo, (const uint8_t*)PTR, strlen(PTR))` — la sobrecarga con
+  `const char*`/String COPIA todo al heap por request; con varios clientes
+  el heap tocó 2 KB (minHeap) y corrompía respuestas (scrambling).
+- WiFi: AP "Calibre-ESP" instantáneo al boot (~2 s) + STA en paralelo; al
+  conectar la STA el AP se apaga solo (`wifiPoll()` en webserverLoop). Lejos
+  de casa el hotspot está siempre disponible sin esperar timeouts.
+- `GET /llms.txt`: guía para asistentes IA (API + flujo de sesiones) — un
+  LLM con solo HTTP puede autodescubrir el dispositivo. La vista Ayuda de la
+  UI tiene un botón que la copia al portapapeles.
 - La UI se prueba con Playwright contra el equipo real (desktop + 375×812);
   `sim` + `POST /api/capture` simulan el botón.
 - Diagnóstico remoto: `GET /api/status` (frames ok/bad, mV, heap, RSSI).

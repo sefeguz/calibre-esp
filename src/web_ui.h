@@ -15,11 +15,11 @@ static const char WEB_UI_HTML[] PROGMEM = R"rawliteral(<!DOCTYPE html>
 <style>
 :root{
   --bg:#14161a; --panel:#1d2026; --panel2:#2a2e36; --fg:#e8e8e8; --dim:#8a8f98;
-  --acc:#ff8b1f; --accfg:#1a1208; --ok:#3ecf6e; --bad:#e0455a; --border:#2f343d;
+  --acc:#4c8dff; --accfg:#ffffff; --ok:#3ecf6e; --bad:#e0455a; --border:#2f343d;
 }
 body[data-theme="light"]{
   --bg:#eef0f3; --panel:#ffffff; --panel2:#e7eaee; --fg:#1b1e24; --dim:#667085;
-  --acc:#e87410; --accfg:#fff; --ok:#179a4a; --bad:#cf3349; --border:#d9dde3;
+  --acc:#2563eb; --accfg:#ffffff; --ok:#179a4a; --bad:#cf3349; --border:#d9dde3;
 }
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
@@ -29,10 +29,14 @@ body{background:var(--bg);color:var(--fg);font-family:system-ui,Segoe UI,Roboto,
 /* ---------- sidebar ---------- */
 #side{width:210px;flex-shrink:0;background:var(--panel);border-right:1px solid var(--border);
   display:flex;flex-direction:column;padding:14px 10px;gap:4px;position:sticky;top:0;height:100vh}
-#brand{font-size:1.05rem;font-weight:700;color:var(--acc);padding:6px 10px 16px;letter-spacing:.5px}
+#brand{font-size:1.05rem;font-weight:700;color:var(--acc);padding:6px 10px 16px;letter-spacing:.5px;display:flex;align-items:center;gap:8px}
+/* íconos Lucide inline: trazos que siguen el color del texto/tema */
+svg.lic{width:1.1em;height:1.1em;fill:none;stroke:currentColor;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round;vertical-align:-.18em;flex-shrink:0}
+#brand svg.lic{width:1.25em;height:1.25em}
 .navbtn{display:flex;align-items:center;gap:10px;width:100%;padding:11px 12px;border:0;border-radius:10px;
   background:transparent;color:var(--dim);font-size:.95rem;cursor:pointer;text-align:left}
-.navbtn .ic{font-size:1.15rem;width:24px;text-align:center}
+.navbtn svg.ic{width:20px;height:20px}
 .navbtn.active{background:var(--panel2);color:var(--fg);font-weight:600}
 .navbtn:hover{color:var(--fg)}
 #side .grow{flex:1}
@@ -104,7 +108,7 @@ textarea{font-family:Consolas,Menlo,monospace;min-height:130px;resize:vertical}
     flex-direction:row;justify-content:space-around;padding:4px 4px;border-right:0;border-top:1px solid var(--border)}
   #brand,#sideFoot,#side .grow{display:none}
   .navbtn{flex-direction:column;gap:2px;padding:7px 4px;font-size:.62rem;width:auto;flex:1;align-items:center;border-radius:8px}
-  .navbtn .ic{font-size:1.25rem;width:auto}
+  .navbtn svg.ic{width:22px;height:22px}
   main{padding:12px 12px 86px}
   .cols{grid-template-columns:1fr}
   #liveWrap{padding:16px 4px 12px}
@@ -112,15 +116,32 @@ textarea{font-family:Consolas,Menlo,monospace;min-height:130px;resize:vertical}
 </style>
 </head>
 <body data-theme="dark">
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-ruler" viewBox="0 0 24 24"><path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.4 2.4 0 0 1 0-3.4l2.6-2.6a2.4 2.4 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M21 4h-7"/><path d="M10 4H3"/><path d="M21 12h-9"/><path d="M8 12H3"/><path d="M21 20h-5"/><path d="M12 20H3"/><path d="M14 2v4"/><path d="M8 10v4"/><path d="M16 18v4"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+  <symbol id="i-capture" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/><path d="M12 8v8"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3v18l14-9z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M10 11v6"/><path d="M14 11v6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+</svg>
 <div id="app">
 <nav id="side">
-  <div id="brand">&#128207; Calibre-ESP</div>
-  <button class="navbtn active" data-view="live"><span class="ic">&#128200;</span>En vivo</button>
-  <button class="navbtn" data-view="session"><span class="ic">&#128221;</span>Medici&oacute;n</button>
-  <button class="navbtn" data-view="caps"><span class="ic">&#128229;</span>Capturas</button>
-  <button class="navbtn" data-view="cfg"><span class="ic">&#9881;&#65039;</span>Config</button>
+  <div id="brand"><svg class="lic"><use href="#i-ruler"/></svg>Calibre-ESP</div>
+  <button class="navbtn active" data-view="live"><svg class="ic lic"><use href="#i-activity"/></svg>En vivo</button>
+  <button class="navbtn" data-view="session"><svg class="ic lic"><use href="#i-clip"/></svg>Medici&oacute;n</button>
+  <button class="navbtn" data-view="caps"><svg class="ic lic"><use href="#i-download"/></svg>Capturas</button>
+  <button class="navbtn" data-view="cfg"><svg class="ic lic"><use href="#i-sliders"/></svg>Config</button>
+  <button class="navbtn" data-view="help"><svg class="ic lic"><use href="#i-help"/></svg>Ayuda</button>
   <div class="grow"></div>
-  <button class="navbtn" id="themeBtn"><span class="ic" id="themeIc">&#9728;&#65039;</span><span id="themeTxt">Modo claro</span></button>
+  <button class="navbtn" id="themeBtn"><svg class="ic lic"><use id="themeUse" href="#i-sun"/></svg><span id="themeTxt">Modo claro</span></button>
   <div id="sideFoot">v<span id="fwv">?</span> &middot; <a href="/update">OTA</a></div>
 </nav>
 
@@ -139,9 +160,9 @@ textarea{font-family:Consolas,Menlo,monospace;min-height:130px;resize:vertical}
   <div class="panel" id="liveWrap">
     <span id="rel" class="chip">REL</span><span id="hold" class="chip">HOLD</span>
     <div><span id="val" class="off">---.--</span><span id="unit">mm</span></div>
-    <div id="sesChip" onclick="showView('session')">&#128221; Medici&oacute;n en curso: <b id="sesChipTxt"></b></div>
+    <div id="sesChip" onclick="showView('session')"><svg class="lic"><use href="#i-clip"/></svg> Medici&oacute;n en curso: <b id="sesChipTxt"></b></div>
     <div class="row">
-      <button class="acc" onclick="capture()">&#128229; Capturar</button>
+      <button class="acc" onclick="capture()"><svg class="lic"><use href="#i-capture"/></svg> Capturar</button>
       <button onclick="toggleZero()">Zero rel</button>
       <button onclick="toggleHold()">Hold</button>
       <button onclick="toggleUnit()">mm &#8644; in</button>
@@ -161,7 +182,7 @@ textarea{font-family:Consolas,Menlo,monospace;min-height:130px;resize:vertical}
     <h2>Nueva lista de mediciones</h2>
     <label>Una medici&oacute;n por l&iacute;nea (ej.: ancho interior, alto, profundidad...)</label>
     <textarea id="sesNames" placeholder="ancho interior&#10;alto&#10;profundidad"></textarea>
-    <div class="row"><button class="acc" onclick="startSession()">&#9654; Iniciar medici&oacute;n</button></div>
+    <div class="row"><button class="acc" onclick="startSession()"><svg class="lic"><use href="#i-play"/></svg> Iniciar medici&oacute;n</button></div>
     <div class="hint">Claude tambi&eacute;n puede iniciar una lista autom&aacute;ticamente v&iacute;a MCP.</div>
   </div>
 
@@ -176,10 +197,10 @@ textarea{font-family:Consolas,Menlo,monospace;min-height:130px;resize:vertical}
       <tbody></tbody>
     </table>
     <div class="row">
-      <button class="acc" id="sesConfirmBtn" onclick="confirmSession()" disabled>&#10003; Confirmar y enviar</button>
-      <button onclick="capture()">&#128229; Capturar</button>
-      <button onclick="sessionCsv()">&#8681; CSV</button>
-      <button class="danger" onclick="cancelSession()">Cancelar</button>
+      <button class="acc" id="sesConfirmBtn" onclick="confirmSession()" disabled><svg class="lic"><use href="#i-check"/></svg> Confirmar y enviar</button>
+      <button onclick="capture()"><svg class="lic"><use href="#i-capture"/></svg> Capturar</button>
+      <button onclick="sessionCsv()"><svg class="lic"><use href="#i-download"/></svg> CSV</button>
+      <button class="danger" onclick="cancelSession()"><svg class="lic"><use href="#i-x"/></svg> Cancelar</button>
     </div>
   </div>
 </section>
@@ -190,9 +211,9 @@ textarea{font-family:Consolas,Menlo,monospace;min-height:130px;resize:vertical}
     <h2>Capturas <span id="capCount" style="color:var(--acc)"></span></h2>
     <table id="capTable"><thead><tr><th>#</th><th>Hora</th><th style="text-align:right">Valor</th></tr></thead><tbody></tbody></table>
     <div class="row">
-      <button class="acc" onclick="capture()">&#128229; Capturar</button>
-      <button onclick="exportCsv()">&#8681; Exportar CSV</button>
-      <button class="danger" onclick="clearCaps()">Borrar</button>
+      <button class="acc" onclick="capture()"><svg class="lic"><use href="#i-capture"/></svg> Capturar</button>
+      <button onclick="exportCsv()"><svg class="lic"><use href="#i-download"/></svg> Exportar CSV</button>
+      <button class="danger" onclick="clearCaps()"><svg class="lic"><use href="#i-trash"/></svg> Borrar</button>
     </div>
   </div>
 </section>
@@ -225,6 +246,45 @@ textarea{font-family:Consolas,Menlo,monospace;min-height:130px;resize:vertical}
     </form>
   </div>
 </section>
+
+<!-- ============ AYUDA ============ -->
+<section class="view" id="view-help">
+  <div class="panel">
+    <h2>Uso r&aacute;pido</h2>
+    <table>
+      <tr><td><b>Bot&oacute;n f&iacute;sico (corto)</b></td><td>Captura la medici&oacute;n: la tipea por Bluetooth en la PC/celular emparejado y la guarda en Capturas. Si hay una medici&oacute;n guiada en curso, llena la fila actual y avanza.</td></tr>
+      <tr><td><b>Bot&oacute;n f&iacute;sico (largo 1.5s)</b></td><td>Zero relativo: medir diferencias respecto de la posici&oacute;n actual.</td></tr>
+      <tr><td><b>Medici&oacute;n guiada</b></td><td>En la vista Medici&oacute;n escrib&iacute;s la lista (una por l&iacute;nea) e inici&aacute;s. Cada captura llena la fila actual. Toc&aacute; una fila para repetirla. Al completar todas, Confirmar.</td></tr>
+      <tr><td><b>Teclado Bluetooth</b></td><td>Emparej&aacute; "Calibre-ESP" desde la PC/celu. Cada captura tipea el valor + la tecla final configurada (Enter/Tab/Espacio). El separador decimal se elige en Config.</td></tr>
+      <tr><td><b>Hold / mm&#8644;in</b></td><td>Solo afectan lo que se muestra en pantalla, no lo que se captura.</td></tr>
+      <tr><td><b>Sin lectura</b></td><td>Verific&aacute; que el calibre est&eacute; conectado y encendido. El badge CALIBRE en verde indica se&ntilde;al OK. En Config pod&eacute;s re-detectar.</td></tr>
+    </table>
+  </div>
+  <div class="panel">
+    <h2>Para Claude / asistentes IA</h2>
+    <p style="font-size:.92rem;line-height:1.5;color:var(--dim)">
+      Este dispositivo es usable por una IA: con el <b>MCP "calibre"</b> (en el repo,
+      <code style="color:var(--fg)">mcp/calibre_mcp.py</code>) Claude puede leer mediciones en vivo y pedir
+      listas de mediciones que el usuario completa con el bot&oacute;n. Sin MCP, toda la
+      funcionalidad est&aacute; disponible por API REST.
+      La gu&iacute;a completa para IAs vive en
+      <a href="/llms.txt" style="color:var(--acc)">/llms.txt</a> &mdash; si us&aacute;s un asistente sin acceso
+      a este equipo, copi&aacute;le la gu&iacute;a y va a saber exactamente c&oacute;mo operarlo.
+    </p>
+    <div class="row">
+      <button class="acc" onclick="copyLlms()"><svg class="lic"><use href="#i-copy"/></svg> Copiar gu&iacute;a para IA</button>
+      <button onclick="location.href='/llms.txt'"><svg class="lic"><use href="#i-download"/></svg> Ver /llms.txt</button>
+    </div>
+  </div>
+  <div class="panel">
+    <h2>Enlaces</h2>
+    <p style="font-size:.9rem;color:var(--dim)">
+      Firmware v<span id="fwv2">?</span> &middot; <a href="/update" style="color:var(--acc)">Actualizaci&oacute;n OTA</a> &middot;
+      <a href="https://github.com/sefeguz/calibre-esp" style="color:var(--acc)">GitHub</a> &middot;
+      API: <code style="color:var(--fg)">/api/status</code>, <code style="color:var(--fg)">/api/value</code>
+    </p>
+  </div>
+</section>
 </main>
 </div>
 <div id="toast"></div>
@@ -239,7 +299,7 @@ let cfgSep=',';
 /* ---------- tema ---------- */
 function applyTheme(t){
   document.body.dataset.theme=t;
-  document.getElementById('themeIc').innerHTML = t==='dark' ? '&#9728;&#65039;' : '&#127769;';
+  document.getElementById('themeUse').setAttribute('href', t==='dark' ? '#i-sun' : '#i-moon');
   document.getElementById('themeTxt').textContent = t==='dark' ? 'Modo claro' : 'Modo oscuro';
   localStorage.theme=t;
 }
@@ -247,7 +307,7 @@ document.getElementById('themeBtn').onclick=()=>applyTheme(document.body.dataset
 applyTheme(localStorage.theme||'dark');
 
 /* ---------- vistas ---------- */
-const TITLES={live:'En vivo',session:'Medición',caps:'Capturas',cfg:'Configuración'};
+const TITLES={live:'En vivo',session:'Medición',caps:'Capturas',cfg:'Configuración',help:'Ayuda'};
 function showView(v){
   document.querySelectorAll('.view').forEach(s=>s.classList.toggle('active',s.id==='view-'+v));
   document.querySelectorAll('.navbtn[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===v));
@@ -405,6 +465,13 @@ function toggleUnit(){ inch=!inch; render(); renderStats(); renderCaps(); render
 function resetStats(){ stats={n:0,sum:0,min:null,max:null}; renderStats(); }
 function redetect(){ fetch('/api/redetect',{method:'POST'}); toast('Re-detectando señal...'); }
 function reboot(){ fetch('/api/reboot',{method:'POST'}); toast('Reiniciando...'); }
+function copyLlms(){
+  fetch('/llms.txt').then(r=>r.text()).then(t=>{
+    const base=`Guía del dispositivo Calibre-ESP en http://${location.host}\n\n`;
+    return navigator.clipboard.writeText(base+t);
+  }).then(()=>toast('Guía copiada — pegásela a tu asistente'))
+    .catch(()=>{ location.href='/llms.txt'; });
+}
 
 /* ---------- config ---------- */
 function loadCfg(){
@@ -414,6 +481,7 @@ function loadCfg(){
     f.eol.value=j.eol; f.ble.value=j.ble?1:0; f.rmode.value=j.rmode; f.inv.value=j.inv?1:0;
     cfgSep=j.sep;
     document.getElementById('fwv').textContent=j.fw;
+    document.getElementById('fwv2').textContent=j.fw;
   });
 }
 function saveCfg(ev){

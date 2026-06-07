@@ -5,6 +5,7 @@
 #include "session.h"
 #include "ble_keyboard.h"
 #include "web_ui.h"
+#include "help_text.h"
 
 #include <WiFi.h>
 #include <DNSServer.h>
@@ -23,37 +24,45 @@ static bool apMode = false;
 bool webserverInApMode() { return apMode; }
 
 // ---------------------------------------------------------------------------
-// WiFi: STA con credenciales guardadas; si falla, AP con portal cautivo.
+// WiFi: AP instantáneo + STA en paralelo. El hotspot "Calibre-ESP" está
+// disponible a ~2 s del encendido SIEMPRE (clave para uso portátil: nada de
+// esperar un timeout de 30 s lejos de casa). Si la red guardada aparece, la
+// conexión STA se hace por atrás y el AP se apaga solo (ver webserverLoop).
 // ---------------------------------------------------------------------------
+static bool staPending = false;   // esperando que la STA conecte
+
 static void wifiBegin()
 {
     WiFi.setHostname(settings.deviceName.c_str());
 
+    apMode = true;
+    WiFi.mode(WIFI_AP_STA);
+    WiFi.softAP(AP_SSID, AP_PASS);
+    dnsServer.start(53, "*", WiFi.softAPIP());      // portal cautivo
+    Serial.printf("[wifi] AP '%s' listo, IP: %s\n", AP_SSID,
+                  WiFi.softAPIP().toString().c_str());
+
     if (settings.wifiSsid.length() > 0) {
-        WiFi.mode(WIFI_STA);
-        WiFi.begin(settings.wifiSsid.c_str(), settings.wifiPass.c_str());
-        Serial.printf("[wifi] conectando a '%s'", settings.wifiSsid.c_str());
-
-        uint32_t deadline = millis() + WIFI_CONNECT_TIMEOUT_MS;
-        while (WiFi.status() != WL_CONNECTED && millis() < deadline) {
-            delay(250);
-            Serial.print('.');
-        }
-        Serial.println();
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
         WiFi.setAutoReconnect(true);
-        Serial.printf("[wifi] conectado, IP: %s\n", WiFi.localIP().toString().c_str());
-    } else {
-        apMode = true;
-        WiFi.mode(WIFI_AP);
-        WiFi.softAP(AP_SSID, AP_PASS);
-        dnsServer.start(53, "*", WiFi.softAPIP());  // portal cautivo
-        Serial.printf("[wifi] modo AP '%s', IP: %s\n", AP_SSID,
-                      WiFi.softAPIP().toString().c_str());
+        WiFi.begin(settings.wifiSsid.c_str(), settings.wifiPass.c_str());
+        staPending = true;
+        Serial.printf("[wifi] intentando '%s' en segundo plano...\n",
+                      settings.wifiSsid.c_str());
     }
+}
 
+// Llamado desde webserverLoop: cuando la STA conecta, apagar el AP.
+static void wifiPoll()
+{
+    if (!staPending || WiFi.status() != WL_CONNECTED) return;
+    staPending = false;
+    apMode = false;
+    dnsServer.stop();
+    WiFi.softAPdisconnect(true);
+    WiFi.mode(WIFI_STA);
+    Serial.printf("[wifi] conectado a '%s', IP: %s — AP apagado\n",
+                  settings.wifiSsid.c_str(),
+                  WiFi.localIP().toString().c_str());
     if (MDNS.begin(MDNS_NAME)) {
         MDNS.addService("http", "tcp", 80);
         Serial.printf("[mdns] http://%s.local\n", MDNS_NAME);
@@ -98,9 +107,19 @@ static const char OTA_FORM[] PROGMEM = R"(<!DOCTYPE html><html><body style="font
 
 static void setupRoutes()
 {
-    // UI principal (embebida en flash)
+    // UI principal — servir DIRECTO desde flash, sin copia: send(..., String)
+    // duplicaría ~28 KB en heap por request y bajo concurrencia (WS + varios
+    // clientes) estrangula la RAM y corrompe respuestas.
     server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
-        req->send(200, "text/html", WEB_UI_HTML);
+        req->send(200, "text/html",
+                  (const uint8_t*)WEB_UI_HTML, strlen(WEB_UI_HTML));
+    });
+
+    // Guía para asistentes IA (estándar llms.txt): cualquier LLM con acceso
+    // HTTP puede autodescubrir la API y el flujo de medición guiada.
+    server.on("/llms.txt", HTTP_GET, [](AsyncWebServerRequest* req) {
+        req->send(200, "text/plain; charset=utf-8",
+                  (const uint8_t*)LLMS_TXT, strlen(LLMS_TXT));
     });
 
     // --- API ---
@@ -433,6 +452,7 @@ void webserverBegin()
 
 void webserverLoop()
 {
+    wifiPoll();
     if (apMode) dnsServer.processNextRequest();
     static uint32_t lastClean = 0;
     if (millis() - lastClean > 1000) {
