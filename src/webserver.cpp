@@ -37,6 +37,9 @@ enum class WifiState : uint8_t { IDLE, SCANNING, CONNECTING, CONNECTED };
 static WifiState wifiState = WifiState::IDLE;
 static uint32_t wifiNextScanMs = 0;
 static uint32_t wifiDeadlineMs = 0;
+// caché del último escaneo (para el selector de redes de la UI)
+static String   scanCacheJson;
+static uint32_t scanCacheMs = 0;
 static int8_t   wifiCand[WIFI_MAX_NETWORKS];   // índices a settings.wifi
 static uint8_t  wifiCandCount = 0;
 static uint8_t  wifiCandIdx = 0;
@@ -68,6 +71,51 @@ static void apEnable()
     dnsServer.start(53, "*", WiFi.softAPIP());      // portal cautivo
     Serial.printf("[wifi] AP '%s' listo, IP: %s\n", AP_SSID,
                   WiFi.softAPIP().toString().c_str());
+}
+
+// Serializa los resultados de un escaneo terminado a la caché JSON:
+// deduplicado por SSID (conserva la de mejor señal), ordenado por RSSI.
+static void wifiCacheScan(int n)
+{
+    struct Net { String ssid; int32_t rssi; bool sec; };
+    Net nets[20];
+    uint8_t nn = 0;
+    for (int i = 0; i < n; i++) {
+        String ssid = WiFi.SSID(i);
+        if (!ssid.length()) continue;          // redes ocultas
+        int32_t rssi = WiFi.RSSI(i);
+        bool dup = false;
+        for (uint8_t k = 0; k < nn; k++) {
+            if (nets[k].ssid == ssid) {
+                dup = true;
+                if (rssi > nets[k].rssi) nets[k].rssi = rssi;
+                break;
+            }
+        }
+        if (!dup && nn < 20) {
+            nets[nn].ssid = ssid;
+            nets[nn].rssi = rssi;
+            nets[nn].sec = WiFi.encryptionType(i) != WIFI_AUTH_OPEN;
+            nn++;
+        }
+    }
+    for (uint8_t a = 0; a < nn; a++)
+        for (uint8_t b = a + 1; b < nn; b++)
+            if (nets[b].rssi > nets[a].rssi) {
+                Net t = nets[a]; nets[a] = nets[b]; nets[b] = t;
+            }
+
+    JsonDocument doc;
+    JsonArray arr = doc["networks"].to<JsonArray>();
+    for (uint8_t i = 0; i < nn; i++) {
+        JsonObject o = arr.add<JsonObject>();
+        o["ssid"] = nets[i].ssid;
+        o["rssi"] = nets[i].rssi;
+        o["sec"] = nets[i].sec;
+    }
+    scanCacheJson = "";
+    serializeJson(doc, scanCacheJson);
+    scanCacheMs = millis();
 }
 
 static void wifiTryCandidate()
@@ -104,6 +152,7 @@ static void wifiTick()
         case WifiState::SCANNING: {
             int n = WiFi.scanComplete();
             if (n == WIFI_SCAN_RUNNING) return;
+            if (n >= 0) wifiCacheScan(n);   // alimentar el selector de la UI
             wifiCandCount = 0;
             if (n > 0) {
                 // candidatas = redes guardadas presentes, por señal descendente
@@ -412,6 +461,29 @@ static void setupRoutes()
                       ok ? "{\"ok\":true}" : "{\"ok\":false}");
         });
     server.addHandler(sessionHandler);
+
+    // Escaneo de redes para el selector de la UI. Devuelve la caché si es
+    // fresca; si no, dispara un escaneo (compartido con la máquina de estados
+    // cuando está en modo AP) y el cliente repite hasta tener resultados.
+    server.on("/api/wifi/scan", HTTP_GET, [](AsyncWebServerRequest* req) {
+        if (scanCacheMs && millis() - scanCacheMs < 12000) {
+            req->send(200, "application/json", scanCacheJson);
+            return;
+        }
+        if (wifiState == WifiState::CONNECTED) {
+            int n = WiFi.scanComplete();
+            if (n >= 0) {
+                wifiCacheScan(n);
+                WiFi.scanDelete();
+                req->send(200, "application/json", scanCacheJson);
+                return;
+            }
+            if (n != WIFI_SCAN_RUNNING) WiFi.scanNetworks(true);
+        } else {
+            wifiNextScanMs = 0;   // forzar que el ciclo escanee ya
+        }
+        req->send(200, "application/json", "{\"scanning\":true}");
+    });
 
     server.on("/api/config", HTTP_GET, [](AsyncWebServerRequest* req) {
         JsonDocument doc;

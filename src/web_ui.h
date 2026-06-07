@@ -131,6 +131,8 @@ textarea{font-family:Consolas,Menlo,monospace;min-height:130px;resize:vertical}
   <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></symbol>
   <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M12 20h.01"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M5 13a10 10 0 0 1 14 0"/><path d="M2 9.5a15 15 0 0 1 20 0"/></symbol>
 </svg>
 <div id="app">
 <nav id="side">
@@ -225,8 +227,12 @@ textarea{font-family:Consolas,Menlo,monospace;min-height:130px;resize:vertical}
     <form id="cfg" onsubmit="saveCfg(event)">
       <label>Redes WiFi guardadas (m&aacute;x 10) &mdash; se conecta a la de mejor se&ntilde;al que encuentre</label>
       <table id="wifiTable"><tbody></tbody></table>
+      <div class="row" style="justify-content:flex-start;margin-top:8px">
+        <button type="button" onclick="scanWifi()" id="scanBtn"><svg class="lic"><use href="#i-wifi"/></svg> Buscar redes</button>
+      </div>
+      <div id="scanList" style="display:none;margin-top:6px;border:1px solid var(--border);border-radius:8px;overflow:hidden"></div>
       <div class="cols" style="margin-top:8px">
-        <div><input id="wifiSsidNew" placeholder="SSID" autocomplete="off"></div>
+        <div><input id="wifiSsidNew" placeholder="SSID (o eleg&iacute; de la lista)" autocomplete="off"></div>
         <div style="display:flex;gap:8px">
           <input id="wifiPassNew" type="password" placeholder="Password" autocomplete="off">
           <button type="button" onclick="addWifi()" style="flex-shrink:0">Agregar</button>
@@ -507,6 +513,43 @@ function addWifi(){
   renderWifi();
 }
 function delWifi(i){ cfgWifi.splice(i,1); renderWifi(); }
+let scanTries=0;
+function scanWifi(){
+  const btn=document.getElementById('scanBtn'), list=document.getElementById('scanList');
+  btn.disabled=true; list.style.display='block';
+  list.innerHTML='<div style="padding:10px;color:var(--dim)">Buscando redes...</div>';
+  scanTries=0; pollScan();
+}
+function pollScan(){
+  fetch('/api/wifi/scan').then(r=>r.json()).then(j=>{
+    const btn=document.getElementById('scanBtn'), list=document.getElementById('scanList');
+    if(j.scanning){
+      if(++scanTries>12){ list.innerHTML='<div style="padding:10px;color:var(--bad)">No se pudo escanear</div>'; btn.disabled=false; return; }
+      setTimeout(pollScan,1000); return;
+    }
+    btn.disabled=false;
+    const nets=j.networks||[];
+    if(!nets.length){ list.innerHTML='<div style="padding:10px;color:var(--dim)">No se encontraron redes</div>'; return; }
+    list.innerHTML='';
+    nets.forEach(n=>{
+      const pct=Math.max(0,Math.min(100,Math.round((n.rssi+95)*2)));
+      const saved=cfgWifi.some(w=>w.ssid===n.ssid);
+      const div=document.createElement('div');
+      div.style.cssText='display:flex;align-items:center;gap:10px;padding:9px 12px;cursor:pointer;border-bottom:1px solid var(--border)';
+      div.innerHTML=`<span style="flex:1">${esc(n.ssid)}${saved?' <span style="color:var(--ok);font-size:.72rem">guardada</span>':''}</span>
+        ${n.sec?'<svg class="lic" style="color:var(--dim)"><use href="#i-lock"/></svg>':''}
+        <span style="color:var(--dim);font-size:.8rem;font-family:Consolas,monospace">${pct}%</span>`;
+      div.onclick=()=>{
+        document.getElementById('wifiSsidNew').value=n.ssid;
+        document.getElementById('wifiPassNew').focus();
+        list.style.display='none';
+      };
+      div.onmouseenter=()=>div.style.background='var(--panel2)';
+      div.onmouseleave=()=>div.style.background='';
+      list.appendChild(div);
+    });
+  }).catch(()=>{ document.getElementById('scanBtn').disabled=false; });
+}
 function loadCfg(){
   fetch('/api/config').then(r=>r.json()).then(j=>{
     const f=document.getElementById('cfg');
