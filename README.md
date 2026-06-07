@@ -4,7 +4,8 @@ Firmware para **ESP32-C3** que lee el puerto de datos (SPC) de un calibre
 digital chino (probado con un Hamilton a pila CR2032) y retransmite las
 mediciones por:
 
-- **WiFi**: interfaz web con display en vivo, capturas, export CSV y configuración
+- **WiFi**: interfaz web (modo claro/oscuro, mobile-friendly) con display en
+  vivo, **sesiones de medición guiada**, capturas, export CSV y configuración
   (`http://calibre.local`)
 - **Bluetooth LE**: actúa como **teclado HID** — al presionar el botón físico
   "tipea" la medición + Enter en la PC/celular emparejado (ideal para cargar
@@ -99,11 +100,27 @@ pio device monitor
 - **Modo de lectura**: auto / digital (3 V) / ADC (1.5 V)
 - **Señal invertida**: para el level-shifter NPN
 
+### Sesiones de medición guiada
+
+Una lista de mediciones con nombre que se completa apretando el botón: la web
+muestra la tabla, cada captura llena la fila actual y avanza sola; se puede
+tocar cualquier fila para repetirla, y al final se **confirma** para entregar
+todo junto. Se crea de dos formas:
+
+- **Manual** (web → Medición): una medición por línea → Iniciar → medir →
+  CSV o Confirmar.
+- **Desde Claude** (MCP): `nueva_medicion(["ancho","alto",...])` crea la
+  lista y la tabla aparece sola en la web; `esperar_mediciones()` recibe los
+  valores confirmados. Ideal para diseñar piezas 3D a medida.
+
 ### API REST
 
 | Endpoint | Descripción |
 |---|---|
 | `GET /api/value` | Última lectura `{mm, counts, unit, on, rel, ts}` |
+| `GET/POST/DELETE /api/session` | Sesión de medición (estado / crear `{items:[...]}` / cancelar) |
+| `POST /api/session/select` | Mover el cursor a un ítem `{index}` |
+| `POST /api/session/confirm` | Confirmar la sesión completa |
 | `GET /api/status` | Diagnóstico completo (modo, frames, niveles mV, heap, RSSI) |
 | `POST /api/capture` | Captura (igual que el botón) |
 | `POST /api/zero` | Zero relativo on/off |
@@ -132,7 +149,10 @@ ofrece automáticamente (ajustar `CALIBRE_URL` si la IP difiere).
 
 | Herramienta | Función |
 |---|---|
-| `esperar_captura(etiqueta)` | Espera el botón BOOT y devuelve la medición |
+| `nueva_medicion(etiquetas)` | Crea una sesión guiada: la tabla aparece en la web |
+| `esperar_mediciones()` | Espera la confirmación y devuelve todos los valores |
+| `cancelar_medicion()` | Cancela la sesión activa |
+| `esperar_captura(etiqueta)` | Espera el botón BOOT y devuelve una medición suelta |
 | `leer_medicion()` | Valor actual instantáneo |
 | `listar_capturas()` / `borrar_capturas()` | Log de mediciones |
 | `zero_relativo()` | Medir diferencias |

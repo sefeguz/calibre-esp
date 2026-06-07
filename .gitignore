@@ -2,3 +2,7 @@
 .vscode/
 reference/
 *.bak
+.playwright-mcp/
+*.png
+!Calibre01.png
+!Calibre02.png

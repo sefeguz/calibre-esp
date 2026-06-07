@@ -3,7 +3,7 @@
 
 #include <Arduino.h>
 
-enum class EolKey : uint8_t { NONE = 0, ENTER = 1, TAB = 2 };
+enum class EolKey : uint8_t { NONE = 0, ENTER = 1, TAB = 2, SPACE = 3 };
 
 struct Settings {
     // red

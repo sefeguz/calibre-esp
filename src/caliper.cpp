@@ -492,6 +492,24 @@ bool Caliper::poll(CaliperReading& out)
     return got;
 }
 
+void Caliper::injectReading(float mm)
+{
+    CaliperReading r;
+    r.counts = (int32_t)lroundf(mm * 100.0f);
+    r.value_mm = mm;
+    r.unit = CaliperUnit::MM;
+    r.timestamp = millis();
+    r.raw = 0;
+
+    portENTER_CRITICAL(&_mux);
+    _last = r;
+    portEXIT_CRITICAL(&_mux);
+    _hasReading = true;
+    _on = true;
+    // timestamp "en el futuro" para que la detección de apagado tarde ~10 s
+    _lastPacketUs = esp_timer_get_time() + (int64_t)10 * 1000 * 1000;
+}
+
 CaliperReading Caliper::lastAtomic()
 {
     CaliperReading r;

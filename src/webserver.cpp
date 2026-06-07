@@ -2,6 +2,7 @@
 #include "config.h"
 #include "app.h"
 #include "settings.h"
+#include "session.h"
 #include "ble_keyboard.h"
 #include "web_ui.h"
 
@@ -195,6 +196,82 @@ static void setupRoutes()
         req->send(res);
     });
 
+    // --- sesión de medición guiada ---
+    server.on("/api/session", HTTP_GET, [](AsyncWebServerRequest* req) {
+        JsonDocument doc;
+        doc["active"] = Session::isActive();
+        if (Session::isActive()) {
+            doc["confirmed"] = Session::isConfirmed();
+            doc["current"] = Session::current();
+            doc["allDone"] = Session::allDone();
+            JsonArray arr = doc["items"].to<JsonArray>();
+            uint8_t n = Session::count();
+            for (uint8_t i = 0; i < n; i++) {
+                SessionItem it = Session::itemAt(i);
+                JsonObject o = arr.add<JsonObject>();
+                o["n"] = it.name;
+                if (it.done) o["v"] = serialized(String(it.mm, 2));
+                else         o["v"] = nullptr;
+                o["d"] = it.done;
+            }
+        }
+        String out;
+        serializeJson(doc, out);
+        req->send(200, "application/json", out);
+    });
+
+    // OJO con el orden: AsyncCallbackJsonWebHandler matchea por PREFIJO de
+    // URL, así que las rutas más específicas (/select, /confirm) tienen que
+    // registrarse ANTES que el handler de creación de "/api/session".
+    auto* selectHandler = new AsyncCallbackJsonWebHandler(
+        "/api/session/select", [](AsyncWebServerRequest* req, JsonVariant& json) {
+            int idx = json["index"] | -1;
+            if (Session::isActive() && idx >= 0 && idx < Session::count()) {
+                Session::select((uint8_t)idx);
+                wsBroadcastSession();
+                req->send(200, "application/json", "{\"ok\":true}");
+            } else {
+                req->send(400, "application/json", "{\"ok\":false}");
+            }
+        });
+    server.addHandler(selectHandler);
+
+    server.on("/api/session/confirm", HTTP_POST, [](AsyncWebServerRequest* req) {
+        bool ok = Session::confirm();
+        if (ok) wsBroadcastSession();
+        req->send(ok ? 200 : 409, "application/json",
+                  ok ? "{\"ok\":true}"
+                     : "{\"ok\":false,\"error\":\"faltan mediciones\"}");
+    });
+
+    server.on("/api/session", HTTP_DELETE, [](AsyncWebServerRequest* req) {
+        Session::cancel();
+        wsBroadcastSession();
+        req->send(200, "application/json", "{\"ok\":true}");
+    });
+
+    auto* sessionHandler = new AsyncCallbackJsonWebHandler(
+        "/api/session", [](AsyncWebServerRequest* req, JsonVariant& json) {
+            JsonArray items = json["items"].as<JsonArray>();
+            if (items.isNull() || items.size() == 0 ||
+                items.size() > SESSION_MAX_ITEMS) {
+                req->send(400, "application/json",
+                          "{\"ok\":false,\"error\":\"cantidad de items invalida\"}");
+                return;
+            }
+            const char* names[SESSION_MAX_ITEMS];
+            size_t n = 0;
+            for (JsonVariant v : items) {
+                const char* s = v.as<const char*>();
+                if (s && strlen(s) > 0) names[n++] = s;
+            }
+            bool ok = n > 0 && Session::start(names, n);
+            if (ok) wsBroadcastSession();
+            req->send(ok ? 200 : 400, "application/json",
+                      ok ? "{\"ok\":true}" : "{\"ok\":false}");
+        });
+    server.addHandler(sessionHandler);
+
     server.on("/api/config", HTTP_GET, [](AsyncWebServerRequest* req) {
         JsonDocument doc;
         doc["ssid"] = settings.wifiSsid;
@@ -222,7 +299,7 @@ static void setupRoutes()
                 const char* s = o["sep"];
                 if (s[0] == ',' || s[0] == '.') settings.decimalSep = s[0];
             }
-            if (o["eol"].is<int>()) settings.eolKey = (EolKey)constrain(o["eol"].as<int>(), 0, 2);
+            if (o["eol"].is<int>()) settings.eolKey = (EolKey)constrain(o["eol"].as<int>(), 0, 3);
             if (o["ble"].is<bool>()) settings.bleEnabled = o["ble"];
             if (o["rmode"].is<int>()) settings.readMode = constrain(o["rmode"].as<int>(), 0, 2);
             if (o["inv"].is<bool>()) settings.invert = o["inv"];
@@ -321,6 +398,12 @@ void wsBroadcastCapture(float displayedMm)
     char buf[48];
     snprintf(buf, sizeof(buf), "{\"t\":\"cap\",\"v\":%.3f}", displayedMm);
     ws.textAll(buf);
+}
+
+void wsBroadcastSession()
+{
+    if (ws.count() == 0) return;
+    ws.textAll("{\"t\":\"ses\"}");   // los clientes refrescan /api/session
 }
 
 void wsBroadcastStatus()

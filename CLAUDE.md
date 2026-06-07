@@ -4,9 +4,11 @@ Firmware ESP32-C3 (PlatformIO/Arduino) que lee un calibre digital Hamilton por
 su puerto SPC y lo expone por web (UI + WebSocket + REST), teclado BLE HID y
 serial. Incluye un servidor MCP para que Claude lea mediciones directamente.
 
-**Estado: v1.1.0 desplegado y verificado en hardware real** (2026-06-05):
-~11.8 Hz (todos los paquetes del calibre), 99.3% frames OK, latencia
-medición→web ~150-300 ms. Repo: https://github.com/sefeguz/calibre-esp
+**Estado: v1.2.0 desplegado y verificado en hardware real** (2026-06-07):
+~11.8 Hz, 99.3% frames OK, latencia medición→web ~150-300 ms. UI con sidebar
+(En vivo / Medición / Capturas / Config), modo claro/oscuro y mobile
+(bottom-nav <760px). Repo: https://github.com/sefeguz/calibre-esp
+El equipo está montado en un case impreso en 3D.
 
 ## Hardware (esta unidad concreta)
 
@@ -37,7 +39,12 @@ solo se cuentan en diagnóstico.
 
 ```
 src/main.cpp        orquestación; ÚNICO lugar donde corren las acciones que
-                    mutan estado (capturas, zero, clear) — ver Concurrencia
+                    mutan estado (capturas, zero, clear) — ver Concurrencia.
+                    captureAction(): con sesión activa el valor va al ítem
+                    actual de la sesión; si no, al log + tipeo BLE
+src/session.*       sesión de medición guiada (lista nombrada que se completa
+                    con el botón; select para repetir; confirm → MCP la
+                    retira). Estado en RAM con mux propio; máx 24 ítems
 src/caliper.{h,cpp} lector dual-modo + decode + filtros anti-glitch
 src/ble_keyboard.*  teclado HID BLE propio sobre NimBLE 2.x (T-vK está roto en C3)
 src/webserver.*     ESPAsyncWebServer: UI PROGMEM, /ws, /api/*, OTA /update,
@@ -131,16 +138,31 @@ $env:PYTHONUTF8 = "1"
   CDC se re-enumera y se pierde el log de boot.
 - Comandos serial: `status` `start` `stop` `redetect` `capture` `zero`
   `pins` (test de cableado con pull-up) `scope` (mini analizador lógico ADC)
-  `blereset`.
+  `blereset` `sim <mm>` (inyecta lectura simulada ~10 s — clave para probar
+  capturas/sesiones/UI SIN el calibre conectado; el usuario lo desconecta
+  para no gastarle la pila).
+- ⚠️ `AsyncCallbackJsonWebHandler` matchea por PREFIJO de URL: registrar las
+  rutas específicas (`/api/session/select`) ANTES que la genérica
+  (`/api/session`), si no la genérica se las traga y devuelve 400.
+- La UI se prueba con Playwright contra el equipo real (desktop + 375×812);
+  `sim` + `POST /api/capture` simulan el botón.
 - Diagnóstico remoto: `GET /api/status` (frames ok/bad, mV, heap, RSSI).
 
 ## MCP (Claude lee el calibre)
 
 `mcp/calibre_mcp.py` (correr con `uv run --script`; deps inline) registrado
-en `.mcp.json`. Herramienta clave: `esperar_captura(etiqueta)` — espera a que
-el usuario apriete BOOT y devuelve el valor (polling de `/api/captures`; si
-da timeout, re-llamar — no es error). Caso de uso: sesiones de medición
-guiadas para diseñar piezas 3D. `CALIBRE_URL` en `.mcp.json` si cambia la IP.
+en `.mcp.json`. `CALIBRE_URL` en `.mcp.json` si cambia la IP.
+
+**Flujo principal para medir piezas (diseño 3D)**:
+1. `nueva_medicion(["ancho interior", "alto", ...])` — la tabla aparece sola
+   en la web del calibre (máx 24 etiquetas de 40 chars).
+2. Avisar al usuario que la lista está lista.
+3. `esperar_mediciones()` en loop (timeout = seguir llamando, no es error;
+   devuelve `progreso`). El usuario completa con el botón, puede repetir
+   tocando una fila, y CONFIRMA en la web → devuelve `{etiqueta: mm}` y
+   limpia la sesión.
+También: `esperar_captura(etiqueta)` para una medición suelta, `leer_medicion`,
+`cancelar_medicion`, `listar/borrar_capturas`, `zero_relativo`, `estado`.
 
 ## Pendiente de validar
 

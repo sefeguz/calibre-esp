@@ -73,6 +73,10 @@ public:
     void redetect();          // pide re-detección; poll() la aplica (thread-safe)
     CaliperDiag diag();       // estado para web/serial (lee ADC bajo demanda)
 
+    // Inyecta una lectura simulada (~10 s de "calibre encendido") — para
+    // probar capturas/sesiones sin el calibre conectado. Comando serial `sim`.
+    void injectReading(float mm);
+
     uint8_t pinClk() const { return _pinClk; }
     uint8_t pinData() const { return _pinData; }
     bool    pinsSwapped() const { return _pinClk != PIN_CALIPER_CLK; }

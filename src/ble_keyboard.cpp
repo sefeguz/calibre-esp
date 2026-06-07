@@ -156,6 +156,7 @@ bool BleKeyboardOut::typeMeasurement(float value, uint8_t decimals, char sep, Eo
     if (sep == ',') text.replace('.', ',');
     if (eol == EolKey::ENTER) text += '\n';
     else if (eol == EolKey::TAB) text += '\t';
+    else if (eol == EolKey::SPACE) text += ' ';
 
     return typeText(text);
 }

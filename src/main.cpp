@@ -8,6 +8,7 @@
 #include "config.h"
 #include "app.h"
 #include "settings.h"
+#include "session.h"
 #include "button.h"
 #include "ble_keyboard.h"
 #include "webserver.h"
@@ -22,6 +23,11 @@ static bool serialStream = true;
 //   captura: ráfaga de 2 destellos (override momentáneo)
 // ---------------------------------------------------------------------------
 static uint32_t ledOverrideUntil = 0;
+
+// Acción de captura unificada (botón físico, web o serial — corre en loop):
+// con sesión de medición activa, el valor va al ítem actual de la sesión;
+// si no, al log de capturas (+ tipeo BLE).
+static bool captureAction();
 
 static void ledWrite(bool on)
 {
@@ -75,10 +81,16 @@ static void serialLoop()
                       caliper.adcMaxBits, (unsigned long)caliper.adcBitTimeouts,
                       (unsigned long)caliper.adcWindows);
     }
-    else if (cmd == "capture") {
-        if (appCapture()) wsBroadcastCapture(appDisplayedMm());
-    }
+    else if (cmd == "capture") { captureAction(); }
     else if (cmd == "zero") { appToggleRelative(); wsBroadcastStatus(); }
+    else if (cmd.startsWith("sim ")) {
+        // inyecta una lectura simulada (pruebas sin calibre): sim 12.34
+        float mm = cmd.substring(4).toFloat();
+        caliper.injectReading(mm);
+        CaliperReading r = caliper.lastAtomic();
+        wsBroadcastReading(r, appDisplayedMm(), appRelativeActive());
+        Serial.printf("[sim] lectura inyectada: %.2f mm\n", mm);
+    }
     else if (cmd == "blereset") {
         // borra los emparejamientos guardados (bonds viejos rotos hacen
         // fallar reconexiones); también hay que "olvidar" el dispositivo
@@ -151,7 +163,7 @@ static void serialLoop()
         caliper.begin(m, settings.invert);
     }
     else if (cmd.length()) {
-        Serial.println("comandos: start | stop | status | redetect | capture | zero | pins | scope | blereset");
+        Serial.println("comandos: start | stop | status | redetect | capture | zero | sim <mm> | pins | scope | blereset");
     }
 }
 
@@ -187,16 +199,35 @@ void setup()
     Serial.println("comandos serial: start | stop | status | redetect | capture | zero");
 }
 
+static bool captureAction()
+{
+    if (!caliper.isOn() || !caliper.hasReading()) return false;
+
+    if (Session::isActive() && !Session::isConfirmed()) {
+        // sesión de medición guiada: el valor llena el ítem actual
+        if (Session::record(appDisplayedMm())) {
+            wsBroadcastSession();
+            ledFlashCapture();
+            return true;
+        }
+        return false;
+    }
+
+    if (appCapture()) {                 // captura normal: log + tipeo BLE
+        wsBroadcastCapture(appDisplayedMm());
+        ledFlashCapture();
+        return true;
+    }
+    return false;
+}
+
 void loop()
 {
     // pedidos llegados desde los handlers HTTP (tarea async): ejecutarlos acá,
     // en la tarea del loop, para que el tipeo BLE y las mutaciones de estado
     // nunca corran en la tarea de red
     if (appConsumeCaptureRequest()) {
-        if (appCapture()) {
-            wsBroadcastCapture(appDisplayedMm());
-            ledFlashCapture();
-        }
+        captureAction();
     }
     if (appConsumeZeroRequest()) {
         appToggleRelative();
@@ -241,10 +272,7 @@ void loop()
     // botón físico
     switch (button.poll()) {
         case ButtonEvent::SHORT_PRESS:
-            if (appCapture()) {
-                wsBroadcastCapture(appDisplayedMm());
-                ledFlashCapture();
-            }
+            captureAction();
             break;
         case ButtonEvent::LONG_PRESS:
             appToggleRelative();

@@ -12,3 +12,4 @@ bool webserverInApMode();
 void wsBroadcastReading(const CaliperReading& r, float displayedMm, bool relActive);
 void wsBroadcastCapture(float displayedMm);
 void wsBroadcastStatus();                   // BLE/modo/rel (periódico)
+void wsBroadcastSession();                  // "ses": los clientes refrescan /api/session
