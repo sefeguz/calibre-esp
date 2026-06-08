@@ -594,6 +594,38 @@ static void setupRoutes()
                      : "{\"ok\":false,\"error\":\"faltan mediciones\"}");
     });
 
+    // Editar la lista durante la sesión: agregar / quitar / renombrar ítems
+    auto* addItemHandler = new AsyncCallbackJsonWebHandler(
+        "/api/session/item", [](AsyncWebServerRequest* req, JsonVariant& json) {
+            const char* name = json["name"] | "";
+            bool ok = Session::addItem(name);
+            if (ok) wsBroadcastSession();
+            req->send(ok ? 200 : 400, "application/json",
+                      ok ? "{\"ok\":true}" : "{\"ok\":false}");
+        });
+    server.addHandler(addItemHandler);
+
+    auto* renameHandler = new AsyncCallbackJsonWebHandler(
+        "/api/session/rename", [](AsyncWebServerRequest* req, JsonVariant& json) {
+            int idx = json["index"] | -1;
+            const char* name = json["name"] | "";
+            bool ok = idx >= 0 && Session::renameItem((uint8_t)idx, name);
+            if (ok) wsBroadcastSession();
+            req->send(ok ? 200 : 400, "application/json",
+                      ok ? "{\"ok\":true}" : "{\"ok\":false}");
+        });
+    server.addHandler(renameHandler);
+
+    auto* delItemHandler = new AsyncCallbackJsonWebHandler(
+        "/api/session/remove", [](AsyncWebServerRequest* req, JsonVariant& json) {
+            int idx = json["index"] | -1;
+            bool ok = idx >= 0 && Session::removeItem((uint8_t)idx);
+            if (ok) wsBroadcastSession();
+            req->send(ok ? 200 : 400, "application/json",
+                      ok ? "{\"ok\":true}" : "{\"ok\":false}");
+        });
+    server.addHandler(delItemHandler);
+
     server.on("/api/session", HTTP_DELETE, [](AsyncWebServerRequest* req) {
         Session::cancel();
         wsBroadcastSession();

@@ -33,24 +33,40 @@ Flujo recomendado para disenar una cajita 3D (lo mas comun):
    {etiqueta: valor_mm} y la sesion se limpia sola.
 
 ## Como medir para una cajita (filosofia: medir facil, derivar dificil)
-El calibre mide bien BORDES, no centros imaginarios. Por eso las plantillas
-piden mediciones faciles de apoyar y vos (Claude) derivas lo que necesita el
-CAD:
-- Agujeros centro-a-centro: se mide borde externo a borde externo de los dos
-  agujeros (span_ext) y el diametro (d). Centro-a-centro = span_ext - d (si
-  son iguales) o span_ext - d1/2 - d2/2.
-- Posicion de un agujero: "borde a centro X/Y" = distancia del borde de la
-  placa al borde del agujero + radio. Da el centro en coordenadas del PCB.
-- Stack en Z: "alto sobre PCB" (componente mas alto, define la tapa) +
-  "espesor PCB" + "alto bajo PCB" (pines, define a que altura va el apoyo
-  del board adentro de la caja).
-- Conectores (USB, etc.): ancho/alto de la abertura + "centro a borde
-  lateral" (posicion horizontal) + "centro sobre PCB" (posicion vertical del
-  recorte en la pared). Ojo si el board se sostiene por el USB que pasa por
-  la pared: esa posicion es critica.
+El calibre mide bien BORDES y CARAS PLANAS, no centros ni superficies de
+referencia inaccesibles. Las plantillas piden mediciones faciles de apoyar y
+vos (Claude) derivas lo que necesita el CAD. Formulas de derivacion (los
+nombres entre comillas son los items de las plantillas):
+
+- ALTURAS (se miden incluyendo el PCB, contra su cara plana):
+    alto real arriba (componentes) = "Alto total arriba (comp + PCB)" - "Espesor PCB"
+    alto real abajo  (pines)        = "Alto total abajo (pines + PCB)" - "Espesor PCB"
+  El de arriba define la altura de la tapa; el de abajo, a que altura va el
+  apoyo/repisa del board dentro de la caja.
+
+- AGUJEROS centro-a-centro (no se mide el centro, se deriva):
+    centro-a-centro X = "Agujeros: span exterior X" - "Agujeros: diametro"
+    centro-a-centro Y = "Agujeros: span exterior Y" - "Agujeros: diametro"
+  (span exterior = borde externo de un agujero al borde externo del otro;
+   formula valida para agujeros de igual diametro).
+
+- POSICION de un agujero en la placa (desde el borde):
+    centro X = "Agujero: borde placa a borde X" + "Agujeros: diametro"/2
+    centro Y = "Agujero: borde placa a borde Y" + "Agujeros: diametro"/2
+  ("borde placa a borde" = del borde de la placa al borde mas cercano del agujero).
+
+- CONECTOR (USB, etc.), recorte en la pared:
+    posicion horizontal del centro = "USB: borde placa a borde USB" + "USB: ancho abertura"/2
+    el recorte vertical va desde "USB: cara inf PCB a base USB" y mide de alto
+    "USB: alto abertura". Ojo: si el board se sostiene por el USB que pasa por
+    la pared, esa posicion es critica.
+
 Datum sugerido: esquina inferior-izquierda mirando el lado de componentes.
 Clearances tipicos para imprimir: +0.5mm por lado en la cavidad; apoyo del
-board = alto-bajo-PCB + margen; tapa = alto-sobre-PCB + margen.
+board = alto real abajo + margen; tapa = alto real arriba + margen.
+
+La lista de una sesion se puede editar en vivo (agregar/quitar/renombrar
+items por la web o por API) antes de confirmar.
 
 ## Solo con HTTP (sin MCP)
 - GET    /api/value           -> {"mm":12.34,"counts":1234,"unit":"mm","on":true,"rel":false,"ts":...}
@@ -61,6 +77,9 @@ board = alto-bajo-PCB + margen; tapa = alto-sobre-PCB + margen.
 - GET    /api/session         -> {"active","confirmed","current","allDone","items":[{"n","v","d"}]}
 - POST   /api/session/select  body {"index":N} -> mover el cursor a un item (repetir)
 - POST   /api/session/confirm -> confirmar (requiere todos los items medidos)
+- POST   /api/session/item    body {"name":"..."} -> agregar item a la sesion
+- POST   /api/session/rename  body {"index":N,"name":"..."} -> renombrar item
+- POST   /api/session/remove  body {"index":N} -> quitar item
 - DELETE /api/session         -> cancelar / retirar la sesion
 - POST   /api/capture         -> captura (equivale al boton fisico)
 - GET    /api/captures        -> log de capturas sueltas [{v,age,ts}]

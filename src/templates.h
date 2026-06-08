@@ -1,13 +1,23 @@
 // Plantillas de medición para diseñar cajitas de dispositivos IoT/Arduino.
 //
-// Filosofía: medir lo FÁCIL con el calibre (bordes, distancias a lados) y
-// derivar lo difícil (centros de agujeros) en el CAD. Por eso muchos ítems
-// piden "borde a centro" o "separacion (centros)" en vez de centro-a-centro
-// directo, que es incómodo de medir.
+// Filosofía: medir lo FÁCIL con el calibre (bordes, caras planas) y derivar
+// lo difícil en el CAD. Dos consecuencias en los nombres:
+//  - Las ALTURAS se miden incluyendo el PCB (contra su cara plana, que es
+//    fácil de apoyar) y el diseño resta el espesor del PCB:
+//      alto_real_arriba = "alto total arriba" - "espesor PCB"
+//      alto_real_abajo  = "alto total abajo"  - "espesor PCB"
+//  - Los AGUJEROS se miden por sus BORDES (no por el centro, que no se puede
+//    apoyar):
+//      centro-a-centro = "span exterior" - "diametro"   (agujeros iguales)
+//      centro (desde el borde de la placa) = "borde placa a borde" + diametro/2
+//  - Conectores: posicion horizontal = "borde placa a borde USB" + ancho/2;
+//    el recorte vertical va de "cara inf PCB a base USB" hacia arriba "alto".
+//
+// Cada plantilla incluye las companeras necesarias para cerrar la derivacion
+// (espesor PCB, diametro de agujero, ancho de abertura).
 //
 // Datum sugerido: esquina inferior-izquierda mirando el lado de componentes.
-// Nombres en ASCII (sin acentos) para evitar problemas de encoding en el
-// código fuente; máximo SESSION_NAME_LEN (40) caracteres c/u.
+// Nombres en ASCII (sin acentos) por el encoding del fuente; max 40 chars.
 #pragma once
 
 #include <Arduino.h>
@@ -19,13 +29,13 @@ struct MeasureTemplate {
     uint8_t            count;
 };
 
-// --- Caja simple: solo el contorno y el stack en Z (cajita rápida) ---
+// --- Caja simple: contorno + stack en Z (cajita rápida) ---
 static const char* const TPL_SIMPLE[] = {
     "Largo placa",
     "Ancho placa",
     "Espesor PCB",
-    "Alto sobre PCB (comp mas alto)",
-    "Alto bajo PCB (pines)",
+    "Alto total arriba (comp + PCB)",
+    "Alto total abajo (pines + PCB)",
 };
 
 // --- Dev board (ESP/Arduino) con USB y 4 agujeros simetricos ---
@@ -33,39 +43,39 @@ static const char* const TPL_DEVBOARD[] = {
     "Largo placa",
     "Ancho placa",
     "Espesor PCB",
-    "Alto sobre PCB (comp mas alto)",
-    "Alto bajo PCB (pines)",
+    "Alto total arriba (comp + PCB)",
+    "Alto total abajo (pines + PCB)",
     "USB: ancho abertura",
     "USB: alto abertura",
-    "USB: centro a borde lateral",
-    "USB: centro sobre PCB",
+    "USB: borde placa a borde USB",
+    "USB: cara inf PCB a base USB",
     "Agujeros: diametro",
-    "Agujeros: separacion X (centros)",
-    "Agujeros: separacion Y (centros)",
-    "Agujeros: borde a centro X",
-    "Agujeros: borde a centro Y",
+    "Agujeros: span exterior X",
+    "Agujeros: span exterior Y",
+    "Agujero: borde placa a borde X",
+    "Agujero: borde placa a borde Y",
 };
 
-// --- Placa + display (OLED/LCD): suma la ventana visible del display ---
+// --- Placa + display (OLED/LCD): suma la ventana visible ---
 static const char* const TPL_DISPLAY[] = {
     "Largo placa",
     "Ancho placa",
     "Espesor PCB",
-    "Alto bajo PCB (pines)",
+    "Alto total abajo (pines + PCB)",
     "USB: ancho abertura",
     "USB: alto abertura",
-    "USB: centro a borde lateral",
-    "USB: centro sobre PCB",
-    "Display: alto modulo total",
+    "USB: borde placa a borde USB",
+    "USB: cara inf PCB a base USB",
+    "Display: alto total (mod + PCB)",
     "Display: ventana visible largo",
     "Display: ventana visible ancho",
     "Display: borde sup a ventana",
     "Display: borde izq a ventana",
     "Agujeros: diametro",
-    "Agujeros: separacion X (centros)",
-    "Agujeros: separacion Y (centros)",
-    "Agujeros: borde a centro X",
-    "Agujeros: borde a centro Y",
+    "Agujeros: span exterior X",
+    "Agujeros: span exterior Y",
+    "Agujero: borde placa a borde X",
+    "Agujero: borde placa a borde Y",
 };
 
 // --- Modulo / sensor breakout (chico, con header de pines) ---
@@ -73,13 +83,13 @@ static const char* const TPL_SENSOR[] = {
     "Largo placa",
     "Ancho placa",
     "Espesor PCB",
-    "Alto sobre PCB (comp mas alto)",
-    "Alto bajo PCB (pines/headers)",
+    "Alto total arriba (comp + PCB)",
+    "Alto total abajo (pines + PCB)",
     "Header: largo fila de pines",
-    "Header: centro a borde",
+    "Header: borde placa a header",
     "Agujeros: diametro",
-    "Agujeros: borde a centro X",
-    "Agujeros: borde a centro Y",
+    "Agujero: borde placa a borde X",
+    "Agujero: borde placa a borde Y",
 };
 
 // --- Panel con botones y LEDs (cara frontal) ---
@@ -87,18 +97,18 @@ static const char* const TPL_PANEL[] = {
     "Largo placa",
     "Ancho placa",
     "Espesor PCB",
-    "Alto sobre PCB (comp mas alto)",
-    "Boton 1: centro X desde borde",
-    "Boton 1: centro Y desde borde",
+    "Alto total arriba (comp + PCB)",
+    "Boton 1: borde placa a borde X",
+    "Boton 1: borde placa a borde Y",
     "Boton 1: diametro cap",
-    "Boton 1: alto sobre PCB",
-    "Boton 2: centro X desde borde",
-    "Boton 2: centro Y desde borde",
-    "LED: centro X desde borde",
-    "LED: centro Y desde borde",
+    "Boton 1: alto total (cap + PCB)",
+    "Boton 2: borde placa a borde X",
+    "Boton 2: borde placa a borde Y",
+    "LED: borde placa a LED X",
+    "LED: borde placa a LED Y",
     "Agujeros: diametro",
-    "Agujeros: borde a centro X",
-    "Agujeros: borde a centro Y",
+    "Agujero: borde placa a borde X",
+    "Agujero: borde placa a borde Y",
 };
 
 #define TPL(arr) (arr), (uint8_t)(sizeof(arr) / sizeof((arr)[0]))

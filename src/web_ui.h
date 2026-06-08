@@ -202,11 +202,15 @@ textarea{font-family:Consolas,Menlo,monospace;min-height:130px;resize:vertical}
     <h2>Medici&oacute;n en curso</h2>
     <div id="sesProgress"></div>
     <div id="sesLive">---.--</div>
-    <div class="hint" style="margin:0 0 8px">posicion&aacute; el calibre y apret&aacute; el bot&oacute;n &mdash; toc&aacute; una fila para repetirla</div>
+    <div class="hint" style="margin:0 0 8px">posicion&aacute; el calibre y apret&aacute; el bot&oacute;n &mdash; toc&aacute; una fila para repetirla, o edit&aacute;/borr&aacute;/agreg&aacute; &iacute;tems</div>
     <table id="sesTable">
-      <thead><tr><th>#</th><th>Medici&oacute;n</th><th style="text-align:right">Valor</th><th class="st"></th></tr></thead>
+      <thead><tr><th>#</th><th>Medici&oacute;n</th><th style="text-align:right">Valor</th><th class="st"></th><th></th></tr></thead>
       <tbody></tbody>
     </table>
+    <div id="sesAddRow" style="display:flex;gap:8px;margin-top:8px">
+      <input id="sesAddName" placeholder="agregar medici&oacute;n..." autocomplete="off" onkeydown="if(event.key==='Enter')addSesItem()">
+      <button type="button" onclick="addSesItem()" style="flex-shrink:0"><svg class="lic"><use href="#i-check"/></svg> Agregar</button>
+    </div>
     <div class="row">
       <button class="acc" id="sesConfirmBtn" onclick="confirmSession()" disabled><svg class="lic"><use href="#i-check"/></svg> Confirmar y enviar</button>
       <button onclick="capture()"><svg class="lic"><use href="#i-capture"/></svg> Capturar</button>
@@ -421,15 +425,48 @@ function renderSession(){
   document.getElementById('sesBanner').style.display=ses.confirmed?'block':'none';
   document.getElementById('sesConfirmBtn').disabled=!(ses.allDone&&!ses.confirmed);
 
+  const editable=!ses.confirmed;
+  document.getElementById('sesAddRow') && (document.getElementById('sesAddRow').style.display=editable?'flex':'none');
   const tb=document.querySelector('#sesTable tbody');
   tb.innerHTML='';
   ses.items.forEach((it,i)=>{
     const tr=document.createElement('tr');
     if(i===ses.current&&!ses.confirmed) tr.className='cur';
-    tr.innerHTML=`<td>${i+1}</td><td>${esc(it.n)}</td><td class="num">${it.d?fmt(it.v)+(inch?' in':' mm'):'—'}</td><td class="st">${it.d?'✓':''}</td>`;
-    tr.onclick=()=>{ if(!ses.confirmed) fetch('/api/session/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:i})}); };
+    const nameCell=document.createElement('td'); nameCell.textContent=it.n;
+    if(editable) nameCell.style.cursor='pointer';
+    nameCell.onclick=()=>{ if(editable) selSesItem(i); };
+    const numCell=document.createElement('td'); numCell.className='num';
+    numCell.textContent=it.d?fmt(it.v)+(inch?' in':' mm'):'—';
+    const stCell=document.createElement('td'); stCell.className='st'; stCell.textContent=it.d?'✓':'';
+    const idxCell=document.createElement('td'); idxCell.textContent=i+1;
+    const actCell=document.createElement('td');
+    actCell.style.cssText='width:70px;text-align:right;white-space:nowrap';
+    if(editable){
+      actCell.innerHTML=`<button type="button" title="Renombrar" style="padding:3px 7px" onclick="renameSesItem(${i})"><svg class="lic"><use href="#i-pencil"/></svg></button>`+
+        `<button type="button" title="Borrar" style="padding:3px 7px;color:var(--bad)" onclick="removeSesItem(${i})">&#10005;</button>`;
+    }
+    tr.appendChild(idxCell); tr.appendChild(nameCell); tr.appendChild(numCell); tr.appendChild(stCell); tr.appendChild(actCell);
     tb.appendChild(tr);
   });
+}
+function selSesItem(i){ fetch('/api/session/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:i})}); }
+function addSesItem(){
+  const inp=document.getElementById('sesAddName'); const name=inp.value.trim();
+  if(!name){ toast('Escribí el nombre'); return; }
+  fetch('/api/session/item',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})
+    .then(r=>{ if(r.ok){ inp.value=''; } else toast('No se pudo agregar (¿máx 24?)'); });
+}
+function renameSesItem(i){
+  const cur=ses&&ses.items[i]?ses.items[i].n:'';
+  const name=prompt('Nuevo nombre de la medición:',cur);
+  if(name===null) return;
+  const t=name.trim(); if(!t){ toast('Nombre vacío'); return; }
+  fetch('/api/session/rename',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:i,name:t})})
+    .then(r=>{ if(!r.ok) toast('No se pudo renombrar'); });
+}
+function removeSesItem(i){
+  fetch('/api/session/remove',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({index:i})})
+    .then(r=>{ if(!r.ok) toast('No se pudo borrar'); });
 }
 function esc(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 function startSession(){

@@ -37,6 +37,11 @@ bool record(float mm);
 // Marca confirmada (solo si allDone). El MCP la recoge y la borra.
 bool confirm();
 
+// Edición de la lista durante la sesión (solo si activa y no confirmada).
+bool addItem(const char* name);             // agrega un ítem pendiente al final
+bool removeItem(uint8_t index);             // quita un ítem (reacomoda el cursor)
+bool renameItem(uint8_t index, const char* name);
+
 // snapshot para armar JSON (copias consistentes)
 uint8_t     count();
 uint8_t     current();
