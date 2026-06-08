@@ -10,6 +10,11 @@ enum class EolKey : uint8_t { NONE = 0, ENTER = 1, TAB = 2, SPACE = 3 };
 struct WifiNet {
     String ssid;
     String pass;
+    bool   staticIp = false;   // false = DHCP
+    String ip;                 // válidos solo si staticIp
+    String gateway;
+    String subnet;
+    String dns;
 };
 
 struct Settings {

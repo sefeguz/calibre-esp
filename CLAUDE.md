@@ -171,6 +171,27 @@ $env:PYTHONUTF8 = "1"
     (pass vacía = conservar la guardada). Migración del formato viejo de 1 red.
   - ⚠️ UI: "Guardar" debe llamar `addWifi(true)` primero para recoger un SSID
     tipeado a mano que no se "Agregó" (si no, se pierde — era un bug).
+  - **IP estática por red** (v1.6.0): cada `WifiNet` tiene `staticIp` + ip/gw/
+    sn/dns; en NVS se empaca como "wx<i>"="ip|gw|sn|dns" (vacío=DHCP).
+    `wifiTryCandidate` hace `WiFi.config(...)` o resetea a DHCP con
+    `WiFi.config(0,0,0,0)` (hay que resetear explícito al pasar de estática a
+    DHCP). UI: selector DHCP/Manual por red, editar (lápiz) y ver password (ojo).
+- **WebSocket — anti-acumulación (v1.6.1, importante):** el navegador, si la
+  página queda abierta durante un firmware update, reconecta varias veces y
+  dejaba conexiones WS DUPLICADAS que saturaban los sockets del equipo (la 6ª
+  conexión daba timeout) → lag de "valores de a uno con delay". Fixes:
+  (a) JS: guard en `connect()` — no abrir WS nuevo si ya hay uno
+  conectando/abierto, un solo timer de reconexión;
+  (b) `ws.cleanupClients(4)` limita el pool;
+  (c) `wsSendFresh()` envía por-cliente solo si `canSend()` (un cliente lento
+  no frena a los demás) — reemplazó `availableForWriteAll()` que era
+  todo-o-nada. Tras tocar esto, el usuario debe **recargar la página con
+  Ctrl+Shift+R** (su pestaña tiene el JS viejo hasta entonces).
+- Heap libre en operación normal ~32-40 KB (v1.6.x; bajó de ~57 KB en v1.5
+  por las Strings de IP estática y la UI más grande). minHeap estable ~20 KB,
+  sin fuga. Margen OK; a vigilar si se agregan features grandes.
+- Diagnóstico serial: comando `status` ahora incluye línea `wifi:` (STA/AP,
+  IPs, clientes, heap) vía `webserverWifiInfo()`; comando `reboot`.
 - `GET /llms.txt`: guía para asistentes IA (API + flujo de sesiones) — un
   LLM con solo HTTP puede autodescubrir el dispositivo. La vista Ayuda de la
   UI tiene un botón que la copia al portapapeles.

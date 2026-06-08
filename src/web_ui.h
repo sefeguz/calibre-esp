@@ -133,6 +133,9 @@ textarea{font-family:Consolas,Menlo,monospace;min-height:130px;resize:vertical}
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></symbol>
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
   <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M12 20h.01"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M5 13a10 10 0 0 1 14 0"/><path d="M2 9.5a15 15 0 0 1 20 0"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-eyeoff" viewBox="0 0 24 24"><path d="M9.88 9.88a3 3 0 0 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><path d="m2 2 20 20"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></symbol>
 </svg>
 <div id="app">
 <nav id="side">
@@ -231,11 +234,31 @@ textarea{font-family:Consolas,Menlo,monospace;min-height:130px;resize:vertical}
         <button type="button" onclick="scanWifi()" id="scanBtn"><svg class="lic"><use href="#i-wifi"/></svg> Buscar redes</button>
       </div>
       <div id="scanList" style="display:none;margin-top:6px;border:1px solid var(--border);border-radius:8px;overflow:hidden"></div>
-      <div class="cols" style="margin-top:8px">
-        <div><input id="wifiSsidNew" placeholder="SSID (o eleg&iacute; de la lista)" autocomplete="off"></div>
-        <div style="display:flex;gap:8px">
-          <input id="wifiPassNew" type="password" placeholder="Password" autocomplete="off">
-          <button type="button" onclick="addWifi()" style="flex-shrink:0">Agregar</button>
+      <div style="margin-top:10px;border:1px solid var(--border);border-radius:10px;padding:12px">
+        <div id="wifiFormTitle" style="font-size:.82rem;color:var(--dim);margin-bottom:8px">Agregar red</div>
+        <div class="cols">
+          <div><label style="margin-top:0">SSID</label><input id="wifiSsidNew" placeholder="SSID (o eleg&iacute; de la lista)" autocomplete="off"></div>
+          <div><label style="margin-top:0">Password</label>
+            <div style="display:flex;gap:6px">
+              <input id="wifiPassNew" type="password" placeholder="Password" autocomplete="off">
+              <button type="button" id="pwEye" title="Mostrar/ocultar" onclick="togglePw()" style="flex-shrink:0;padding:10px 12px"><svg class="lic"><use href="#i-eye" id="pwEyeUse"/></svg></button>
+            </div>
+          </div>
+          <div><label style="margin-top:0">Direcci&oacute;n IP</label>
+            <select id="wifiMode" onchange="onModeChange()"><option value="dhcp">Autom&aacute;tica (DHCP)</option><option value="static">Manual (IP fija)</option></select>
+          </div>
+        </div>
+        <div id="wifiStatic" style="display:none">
+          <div class="cols">
+            <div><label>IP</label><input id="wifiIp" placeholder="192.168.1.50" autocomplete="off"></div>
+            <div><label>Gateway</label><input id="wifiGw" placeholder="192.168.1.1" autocomplete="off"></div>
+            <div><label>M&aacute;scara</label><input id="wifiSn" placeholder="255.255.255.0" autocomplete="off"></div>
+            <div><label>DNS</label><input id="wifiDns" placeholder="192.168.1.1 (opcional)" autocomplete="off"></div>
+          </div>
+        </div>
+        <div class="row" style="justify-content:flex-start;margin-top:10px">
+          <button type="button" onclick="addWifi()"><svg class="lic"><use href="#i-check"/></svg> <span id="wifiAddLabel">Agregar red</span></button>
+          <button type="button" id="wifiCancelEdit" onclick="resetWifiForm()" style="display:none">Cancelar</button>
         </div>
       </div>
       <div class="cols" style="margin-top:6px">
@@ -435,10 +458,17 @@ function renderSesChip(){
 }
 
 /* ---------- websocket ---------- */
+let wsReconnectT=null;
 function connect(){
+  // no abrir una conexión nueva si ya hay uno conectando/abierto: reconexiones
+  // solapadas dejarían varios WebSocket vivos y saturarían el equipo
+  if(ws && (ws.readyState===0 || ws.readyState===1)) return;
+  clearTimeout(wsReconnectT);
+  try{ if(ws) ws.close(); }catch(e){}
   ws=new WebSocket(`ws://${location.host}/ws`);
   ws.onopen=()=>badge('bWs',true);
-  ws.onclose=()=>{ badge('bWs',false); setTimeout(connect,1500); };
+  ws.onclose=()=>{ badge('bWs',false); clearTimeout(wsReconnectT); wsReconnectT=setTimeout(connect,1500); };
+  ws.onerror=()=>{ try{ws.close();}catch(e){} };
   ws.onmessage=e=>{
     const m=JSON.parse(e.data);
     if(m.t==='r'){
@@ -487,32 +517,81 @@ function copyLlms(){
 }
 
 /* ---------- config ---------- */
-let cfgWifi=[];   // [{ssid, pass|null}] — pass null = conservar la guardada
+let cfgWifi=[];   // [{ssid, pass|null, static, ip, gw, sn, dns}] — pass null = conservar
+let wifiEditIdx=-1;
 function renderWifi(){
   const tb=document.querySelector('#wifiTable tbody');
   tb.innerHTML='';
   cfgWifi.forEach((w,i)=>{
+    const mode=w.static?`IP: ${esc(w.ip||'?')}`:'DHCP';
     const tr=document.createElement('tr');
-    tr.innerHTML=`<td>${esc(w.ssid)}${w.pass!==null?' <span style="color:var(--ok);font-size:.75rem">(nueva)</span>':''}</td>
-      <td style="width:40px;text-align:right"><button type="button" title="Quitar" style="padding:4px 9px;color:var(--bad)" onclick="delWifi(${i})">&#10005;</button></td>`;
+    tr.innerHTML=`<td>${esc(w.ssid)}${w.pass!==null&&w.pass!==undefined?' <span style="color:var(--ok);font-size:.72rem">(nueva)</span>':''}
+        <span style="color:var(--dim);font-size:.72rem">— ${mode}</span></td>
+      <td style="width:78px;text-align:right;white-space:nowrap">
+        <button type="button" title="Editar" style="padding:4px 8px" onclick="editWifi(${i})"><svg class="lic"><use href="#i-pencil"/></svg></button>
+        <button type="button" title="Quitar" style="padding:4px 8px;color:var(--bad)" onclick="delWifi(${i})">&#10005;</button></td>`;
     tb.appendChild(tr);
   });
   if(!cfgWifi.length){
     tb.innerHTML='<tr><td style="color:var(--dim)">sin redes guardadas — el equipo queda en modo hotspot</td></tr>';
   }
 }
-function addWifi(silent){
-  const s=document.getElementById('wifiSsidNew'), p=document.getElementById('wifiPassNew');
-  const ssid=s.value.trim();
-  if(!ssid){ if(!silent) toast('Escribí el SSID'); return; }
-  if(cfgWifi.length>=10){ if(!silent) toast('Máximo 10 redes'); return; }
-  const i=cfgWifi.findIndex(w=>w.ssid===ssid);
-  if(i>=0) cfgWifi[i].pass=p.value;       // re-agregar = actualizar pass
-  else cfgWifi.push({ssid:ssid,pass:p.value});
-  s.value=''; p.value='';
-  renderWifi();
+function togglePw(){
+  const p=document.getElementById('wifiPassNew');
+  const show=p.type==='password';
+  p.type=show?'text':'password';
+  document.getElementById('pwEyeUse').setAttribute('href',show?'#i-eyeoff':'#i-eye');
 }
-function delWifi(i){ cfgWifi.splice(i,1); renderWifi(); }
+function onModeChange(){
+  document.getElementById('wifiStatic').style.display=
+    document.getElementById('wifiMode').value==='static'?'block':'none';
+}
+function resetWifiForm(){
+  wifiEditIdx=-1;
+  ['wifiSsidNew','wifiPassNew','wifiIp','wifiGw','wifiSn','wifiDns'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('wifiMode').value='dhcp'; onModeChange();
+  document.getElementById('wifiFormTitle').textContent='Agregar red';
+  document.getElementById('wifiAddLabel').textContent='Agregar red';
+  document.getElementById('wifiCancelEdit').style.display='none';
+}
+function editWifi(i){
+  const w=cfgWifi[i]; wifiEditIdx=i;
+  document.getElementById('wifiSsidNew').value=w.ssid;
+  document.getElementById('wifiPassNew').value='';
+  document.getElementById('wifiPassNew').placeholder='(sin cambios)';
+  document.getElementById('wifiMode').value=w.static?'static':'dhcp'; onModeChange();
+  document.getElementById('wifiIp').value=w.ip||'';
+  document.getElementById('wifiGw').value=w.gw||'';
+  document.getElementById('wifiSn').value=w.sn||'';
+  document.getElementById('wifiDns').value=w.dns||'';
+  document.getElementById('wifiFormTitle').textContent='Editar red';
+  document.getElementById('wifiAddLabel').textContent='Guardar cambios';
+  document.getElementById('wifiCancelEdit').style.display='';
+}
+function addWifi(silent){
+  const ssid=document.getElementById('wifiSsidNew').value.trim();
+  if(!ssid){ if(!silent) toast('Escribí el SSID'); return; }
+  const isStatic=document.getElementById('wifiMode').value==='static';
+  const ip=document.getElementById('wifiIp').value.trim();
+  if(isStatic && !ipOk(ip)){ if(!silent) toast('IP fija inválida'); return; }
+  const pass=document.getElementById('wifiPassNew').value;
+  const net={ssid:ssid,static:isStatic,
+             ip:ip,gw:document.getElementById('wifiGw').value.trim(),
+             sn:document.getElementById('wifiSn').value.trim(),
+             dns:document.getElementById('wifiDns').value.trim()};
+  if(wifiEditIdx>=0){
+    net.pass=pass.length?pass:cfgWifi[wifiEditIdx].pass; // vacío = conservar
+    cfgWifi[wifiEditIdx]=net;
+  } else {
+    if(cfgWifi.length>=10){ if(!silent) toast('Máximo 10 redes'); return; }
+    const ex=cfgWifi.findIndex(w=>w.ssid===ssid);
+    net.pass=pass;
+    if(ex>=0) cfgWifi[ex]=net; else cfgWifi.push(net);
+  }
+  resetWifiForm(); renderWifi();
+}
+function ipOk(s){ return /^(\d{1,3}\.){3}\d{1,3}$/.test(s) && s.split('.').every(o=>+o<=255); }
+function delWifi(i){ cfgWifi.splice(i,1); if(wifiEditIdx===i)resetWifiForm(); renderWifi(); }
 let scanTries=0;
 function scanWifi(){
   const btn=document.getElementById('scanBtn'), list=document.getElementById('scanList');
@@ -559,8 +638,10 @@ function pollScan(){
 function loadCfg(){
   fetch('/api/config').then(r=>r.json()).then(j=>{
     const f=document.getElementById('cfg');
-    cfgWifi=(j.networks||[]).map(s=>({ssid:s,pass:null}));
-    renderWifi();
+    cfgWifi=(j.networks||[]).map(n=>(typeof n==='string'
+      ? {ssid:n,pass:null,static:false}
+      : {ssid:n.ssid,pass:null,static:!!n.static,ip:n.ip||'',gw:n.gw||'',sn:n.sn||'',dns:n.dns||''}));
+    resetWifiForm(); renderWifi();
     f.name.value=j.name; f.sep.value=j.sep;
     f.eol.value=j.eol; f.ble.value=j.ble?1:0; f.rmode.value=j.rmode; f.inv.value=j.inv?1:0;
     cfgSep=j.sep;
@@ -572,7 +653,8 @@ function saveCfg(ev){
   ev.preventDefault();
   const f=ev.target;
   addWifi(true);   // recoger un SSID escrito a mano que no se "Agregó" aún
-  const body={wifi:cfgWifi.map(w=>({ssid:w.ssid,pass:w.pass===null?'':w.pass})),
+  const body={wifi:cfgWifi.map(w=>({ssid:w.ssid,pass:w.pass===null||w.pass===undefined?'':w.pass,
+                static:!!w.static,ip:w.ip||'',gw:w.gw||'',sn:w.sn||'',dns:w.dns||''})),
               name:f.name.value,sep:f.sep.value,
               eol:+f.eol.value,ble:f.ble.value==='1',rmode:+f.rmode.value,inv:f.inv.value==='1'};
   cfgSep=f.sep.value;

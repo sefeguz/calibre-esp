@@ -80,7 +80,10 @@ static void serialLoop()
         Serial.printf("adc: maxBits=%u timeouts=%lu ventanas=%lu\n",
                       caliper.adcMaxBits, (unsigned long)caliper.adcBitTimeouts,
                       (unsigned long)caliper.adcWindows);
+        Serial.print("wifi: ");
+        Serial.println(webserverWifiInfo());
     }
+    else if (cmd == "reboot") { Serial.println("[ok] reiniciando..."); delay(100); ESP.restart(); }
     else if (cmd == "capture") { captureAction(); }
     else if (cmd == "zero") { appToggleRelative(); wsBroadcastStatus(); }
     else if (cmd.startsWith("sim ")) {

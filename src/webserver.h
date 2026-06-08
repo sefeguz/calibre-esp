@@ -8,6 +8,7 @@
 void webserverBegin();
 void webserverLoop();                       // DNS del portal cautivo + limpieza WS
 bool webserverInApMode();
+String webserverWifiInfo();                 // resumen STA/AP para diagnóstico serial
 
 void wsBroadcastReading(const CaliperReading& r, float displayedMm, bool relActive);
 void wsBroadcastCapture(float displayedMm);

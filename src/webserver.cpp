@@ -23,6 +23,25 @@ static bool apMode = false;
 
 bool webserverInApMode() { return apMode; }
 
+// Resumen del estado WiFi para diagnóstico (comando serial `status`).
+// El ESP32 en AP_STA tiene DOS IPs activas a la vez: la del hotspot
+// (siempre, 192.168.4.1) y la de tu red si la STA está conectada.
+String webserverWifiInfo()
+{
+    String s = "STA=";
+    if (WiFi.status() == WL_CONNECTED) {
+        s += "'" + WiFi.SSID() + "' " + WiFi.localIP().toString() +
+             " (" + String(WiFi.RSSI()) + "dBm)";
+    } else {
+        s += "desconectada";
+    }
+    s += " | AP='" AP_SSID "' " + WiFi.softAPIP().toString() +
+         " clientes=" + String(WiFi.softAPgetStationNum());
+    s += apMode ? " [portal cautivo ON]" : " [portal OFF]";
+    s += " | heap=" + String(ESP.getFreeHeap());
+    return s;
+}
+
 // ---------------------------------------------------------------------------
 // WiFi multi-red con roaming. Claves del diseño (ESP32-C3 = una sola radio):
 //  - El AP "Calibre-ESP" queda SIEMPRE encendido (AP_STA). Nunca se apaga,
@@ -146,8 +165,24 @@ static void wifiCacheScan(int n)
 static void wifiTryCandidate()
 {
     const WifiNet& net = settings.wifi[wifiCand[wifiCandIdx]];
-    Serial.printf("[wifi] intentando '%s' (%u/%u)...\n", net.ssid.c_str(),
-                  wifiCandIdx + 1, wifiCandCount);
+
+    // IP estática o DHCP, según la red. Hay que resetear explícitamente a
+    // DHCP (0.0.0.0) al cambiar de una red estática a una DHCP.
+    if (net.staticIp && net.ip.length()) {
+        IPAddress ip, gw, sn, dns;
+        ip.fromString(net.ip);
+        gw.fromString(net.gateway.length() ? net.gateway : net.ip);
+        sn.fromString(net.subnet.length() ? net.subnet : String("255.255.255.0"));
+        dns.fromString(net.dns.length() ? net.dns : net.gateway);
+        WiFi.config(ip, gw, sn, dns);
+        Serial.printf("[wifi] intentando '%s' IP fija %s (%u/%u)...\n",
+                      net.ssid.c_str(), net.ip.c_str(), wifiCandIdx + 1, wifiCandCount);
+    } else {
+        WiFi.config(IPAddress(0, 0, 0, 0), IPAddress(0, 0, 0, 0),
+                    IPAddress(0, 0, 0, 0));   // DHCP
+        Serial.printf("[wifi] intentando '%s' DHCP (%u/%u)...\n",
+                      net.ssid.c_str(), wifiCandIdx + 1, wifiCandCount);
+    }
     WiFi.begin(net.ssid.c_str(), net.pass.c_str());
     wifiDeadlineMs = millis() + 12000;
     wifiState = WifiState::CONNECTING;
@@ -575,7 +610,15 @@ static void setupRoutes()
         JsonDocument doc;
         JsonArray nets = doc["networks"].to<JsonArray>();
         for (uint8_t i = 0; i < settings.wifiCount; i++) {
-            nets.add(settings.wifi[i].ssid);   // sin passwords
+            JsonObject o = nets.add<JsonObject>();   // sin passwords
+            o["ssid"] = settings.wifi[i].ssid;
+            o["static"] = settings.wifi[i].staticIp;
+            if (settings.wifi[i].staticIp) {
+                o["ip"] = settings.wifi[i].ip;
+                o["gw"] = settings.wifi[i].gateway;
+                o["sn"] = settings.wifi[i].subnet;
+                o["dns"] = settings.wifi[i].dns;
+            }
         }
         doc["name"] = settings.deviceName;
         doc["sep"] = String(settings.decimalSep);
@@ -608,6 +651,14 @@ static void setupRoutes()
                     nuevo[n].pass = (pass && strlen(pass))
                                         ? String(pass)
                                         : settings.passFor(ssid);
+                    nuevo[n].staticIp = w["static"] | false;
+                    if (nuevo[n].staticIp) {
+                        nuevo[n].ip      = (const char*)(w["ip"]  | "");
+                        nuevo[n].gateway = (const char*)(w["gw"]  | "");
+                        nuevo[n].subnet  = (const char*)(w["sn"]  | "");
+                        nuevo[n].dns     = (const char*)(w["dns"] | "");
+                        if (!nuevo[n].ip.length()) nuevo[n].staticIp = false;
+                    }
                     n++;
                 }
                 for (uint8_t i = 0; i < n; i++) settings.wifi[i] = nuevo[i];
@@ -702,18 +753,25 @@ static void onWsEvent(AsyncWebSocket*, AsyncWebSocketClient* client,
     }
 }
 
+// Envía a cada cliente SOLO si su cola tiene lugar (canSend). Así un cliente
+// lento (celular en WiFi flojo, o una pestaña en segundo plano) se pierde ese
+// frame pero NO frena el refresco de los demás — antes `availableForWriteAll`
+// era todo-o-nada: un cliente atrasado lageaba a todos.
+static void wsSendFresh(const char* buf)
+{
+    for (auto& c : ws.getClients()) {
+        if (c.status() == WS_CONNECTED && c.canSend()) c.text(buf);
+    }
+}
+
 void wsBroadcastReading(const CaliperReading& r, float displayedMm, bool relActive)
 {
     if (ws.count() == 0) return;
-    // Si algún cliente tiene la cola llena, saltear: con WiFi en power-save
-    // (coexistencia BLE) la radio drena lento y encolar de más genera un
-    // backlog de segundos. Mejor perder un frame viejo que mostrar atraso.
-    if (!ws.availableForWriteAll()) return;
     char buf[96];
     snprintf(buf, sizeof(buf),
              "{\"t\":\"r\",\"v\":%.3f,\"u\":%d,\"on\":true,\"rel\":%s}",
              displayedMm, (int)r.unit, relActive ? "true" : "false");
-    ws.textAll(buf);
+    wsSendFresh(buf);
 }
 
 void wsBroadcastCapture(float displayedMm)
@@ -733,7 +791,6 @@ void wsBroadcastSession()
 void wsBroadcastStatus()
 {
     if (ws.count() == 0) return;
-    if (!ws.availableForWriteAll()) return;   // ver wsBroadcastReading
     char buf[96];
     snprintf(buf, sizeof(buf),
              "{\"t\":\"st\",\"ble\":%s,\"mode\":%d,\"rel\":%s,\"on\":%s}",
@@ -759,9 +816,14 @@ void webserverLoop()
 {
     wifiTick();
     if (apMode) dnsServer.processNextRequest();
+    // Limitar el pool de WebSockets a 4: si el navegador reconecta varias
+    // veces (p.ej. tras un firmware update mientras la página está abierta),
+    // las conexiones duplicadas se acumulaban y saturaban los sockets del
+    // equipo → lag y conexiones nuevas que fallaban. cleanupClients(4) cierra
+    // las más viejas y deja siempre lugar.
     static uint32_t lastClean = 0;
     if (millis() - lastClean > 1000) {
         lastClean = millis();
-        ws.cleanupClients();
+        ws.cleanupClients(4);
     }
 }
