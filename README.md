@@ -112,11 +112,16 @@ muestra la tabla, cada captura llena la fila actual y avanza sola; se puede
 tocar cualquier fila para repetirla, y al final se **confirma** para entregar
 todo junto. Se crea de dos formas:
 
+- **Por plantilla** (web → Medición): elegís una plantilla (dev board,
+  placa+display, sensor, panel, caja simple), se carga la lista editable y
+  arrancás. Pensadas para diseñar cajitas: piden medidas fáciles (bordes,
+  distancias a lados) y el diseño 3D calcula los centros de los agujeros.
 - **Manual** (web → Medición): una medición por línea → Iniciar → medir →
   CSV o Confirmar.
-- **Desde Claude** (MCP): `nueva_medicion(["ancho","alto",...])` crea la
-  lista y la tabla aparece sola en la web; `esperar_mediciones()` recibe los
-  valores confirmados. Ideal para diseñar piezas 3D a medida.
+- **Desde Claude** (MCP): `iniciar_plantilla("devboard")` o
+  `nueva_medicion(["ancho","alto",...])` crea la lista y la tabla aparece
+  sola en la web; `esperar_mediciones()` recibe los valores confirmados.
+  Ideal para diseñar piezas 3D a medida.
 
 ### API REST
 
@@ -154,7 +159,9 @@ ofrece automáticamente (ajustar `CALIBRE_URL` si la IP difiere).
 
 | Herramienta | Función |
 |---|---|
-| `nueva_medicion(etiquetas)` | Crea una sesión guiada: la tabla aparece en la web |
+| `listar_plantillas()` | Lista las plantillas para cajitas IoT |
+| `iniciar_plantilla(id)` | Inicia una sesión desde una plantilla (devboard/display/sensor/panel/simple) |
+| `nueva_medicion(etiquetas)` | Crea una sesión guiada a medida: la tabla aparece en la web |
 | `esperar_mediciones()` | Espera la confirmación y devuelve todos los valores |
 | `cancelar_medicion()` | Cancela la sesión activa |
 | `esperar_captura(etiqueta)` | Espera el botón BOOT y devuelve una medición suelta |

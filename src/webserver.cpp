@@ -3,6 +3,7 @@
 #include "app.h"
 #include "settings.h"
 #include "session.h"
+#include "templates.h"
 #include "ble_keyboard.h"
 #include "web_ui.h"
 #include "help_text.h"
@@ -514,6 +515,36 @@ static void setupRoutes()
         res->addHeader("Content-Disposition", "attachment; filename=capturas.csv");
         req->send(res);
     });
+
+    // --- plantillas de medición (para diseñar cajitas) ---
+    server.on("/api/templates", HTTP_GET, [](AsyncWebServerRequest* req) {
+        JsonDocument doc;
+        JsonArray arr = doc.to<JsonArray>();
+        for (uint8_t t = 0; t < MEASURE_TEMPLATES_COUNT; t++) {
+            JsonObject o = arr.add<JsonObject>();
+            o["id"] = MEASURE_TEMPLATES[t].id;
+            o["name"] = MEASURE_TEMPLATES[t].name;
+            JsonArray items = o["items"].to<JsonArray>();
+            for (uint8_t i = 0; i < MEASURE_TEMPLATES[t].count; i++)
+                items.add(MEASURE_TEMPLATES[t].items[i]);
+        }
+        String out;
+        serializeJson(doc, out);
+        req->send(200, "application/json", out);
+    });
+
+    // Iniciar una sesión desde una plantilla por id (cómodo para Claude/MCP)
+    auto* tplHandler = new AsyncCallbackJsonWebHandler(
+        "/api/session/template", [](AsyncWebServerRequest* req, JsonVariant& json) {
+            const char* id = json["id"] | "";
+            const MeasureTemplate* t = templateById(id);
+            bool ok = t && Session::start(t->items, t->count);
+            if (ok) wsBroadcastSession();
+            req->send(ok ? 200 : 400, "application/json",
+                      ok ? "{\"ok\":true}"
+                         : "{\"ok\":false,\"error\":\"plantilla desconocida\"}");
+        });
+    server.addHandler(tplHandler);
 
     // --- sesión de medición guiada ---
     server.on("/api/session", HTTP_GET, [](AsyncWebServerRequest* req) {

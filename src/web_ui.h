@@ -185,10 +185,16 @@ textarea{font-family:Consolas,Menlo,monospace;min-height:130px;resize:vertical}
 <section class="view" id="view-session">
   <div class="panel" id="sesBuilder">
     <h2>Nueva lista de mediciones</h2>
-    <label>Una medici&oacute;n por l&iacute;nea (ej.: ancho interior, alto, profundidad...)</label>
+    <label>Empez&aacute; con una plantilla (para dise&ntilde;ar cajitas)</label>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <select id="tplSel" style="flex:1;min-width:180px"><option value="">— elegir plantilla —</option></select>
+      <button type="button" onclick="loadTemplate()" style="flex-shrink:0">Cargar</button>
+    </div>
+    <div id="tplHint" class="hint" style="text-align:left;margin-top:6px"></div>
+    <label style="margin-top:14px">O escrib&iacute; una medici&oacute;n por l&iacute;nea</label>
     <textarea id="sesNames" placeholder="ancho interior&#10;alto&#10;profundidad"></textarea>
-    <div class="row"><button class="acc" onclick="startSession()"><svg class="lic"><use href="#i-play"/></svg> Iniciar medici&oacute;n</button></div>
-    <div class="hint">Claude tambi&eacute;n puede iniciar una lista autom&aacute;ticamente v&iacute;a MCP.</div>
+    <div class="row" style="justify-content:flex-start"><button class="acc" onclick="startSession()"><svg class="lic"><use href="#i-play"/></svg> Iniciar medici&oacute;n</button></div>
+    <div class="hint" style="text-align:left;margin-top:8px">Truco: med&iacute; bordes (es f&aacute;cil de apoyar el calibre) y el dise&ntilde;o calcula los centros. Claude tambi&eacute;n puede iniciar una lista o una plantilla v&iacute;a MCP.</div>
   </div>
 
   <div class="panel" id="sesActive" style="display:none">
@@ -290,7 +296,8 @@ textarea{font-family:Consolas,Menlo,monospace;min-height:130px;resize:vertical}
     <table>
       <tr><td><b>Bot&oacute;n f&iacute;sico (corto)</b></td><td>Captura la medici&oacute;n: la tipea por Bluetooth en la PC/celular emparejado y la guarda en Capturas. Si hay una medici&oacute;n guiada en curso, llena la fila actual y avanza.</td></tr>
       <tr><td><b>Bot&oacute;n f&iacute;sico (largo 1.5s)</b></td><td>Zero relativo: medir diferencias respecto de la posici&oacute;n actual.</td></tr>
-      <tr><td><b>Medici&oacute;n guiada</b></td><td>En la vista Medici&oacute;n escrib&iacute;s la lista (una por l&iacute;nea) e inici&aacute;s. Cada captura llena la fila actual. Toc&aacute; una fila para repetirla. Al completar todas, Confirmar.</td></tr>
+      <tr><td><b>Medici&oacute;n guiada</b></td><td>En la vista Medici&oacute;n escrib&iacute;s la lista (una por l&iacute;nea) o eleg&iacute;s una <b>plantilla</b> e inici&aacute;s. Cada captura llena la fila actual. Toc&aacute; una fila para repetirla. Al completar todas, Confirmar.</td></tr>
+      <tr><td><b>Plantillas (cajitas)</b></td><td>Listas pre-armadas para medir un dispositivo y dise&ntilde;arle una caja 3D: dev board, placa+display, sensor, panel con botones, o caja simple. Truco: med&iacute; <b>bordes</b> (f&aacute;cil de apoyar el calibre) y el dise&ntilde;o calcula los centros de los agujeros.</td></tr>
       <tr><td><b>Teclado Bluetooth</b></td><td>Emparej&aacute; "Calibre-ESP" desde la PC/celu. Cada captura tipea el valor + la tecla final configurada (Enter/Tab/Espacio). El separador decimal se elige en Config.</td></tr>
       <tr><td><b>Hold / mm&#8644;in</b></td><td>Solo afectan lo que se muestra en pantalla, no lo que se captura.</td></tr>
       <tr><td><b>Sin lectura</b></td><td>Verific&aacute; que el calibre est&eacute; conectado y encendido. El badge CALIBRE en verde indica se&ntilde;al OK. En Config pod&eacute;s re-detectar.</td></tr>
@@ -430,6 +437,21 @@ function startSession(){
   if(!names.length){ toast('Escribí al menos una medición'); return; }
   fetch('/api/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:names})})
     .then(r=>{ if(!r.ok) toast('No se pudo iniciar'); });
+}
+let templates=[];
+function loadTemplates(){
+  fetch('/api/templates').then(r=>r.json()).then(j=>{
+    templates=j;
+    const sel=document.getElementById('tplSel');
+    j.forEach(t=>{ const o=document.createElement('option'); o.value=t.id; o.textContent=`${t.name} (${t.items.length})`; sel.appendChild(o); });
+  }).catch(()=>{});
+}
+function loadTemplate(){
+  const id=document.getElementById('tplSel').value;
+  const t=templates.find(x=>x.id===id);
+  if(!t){ toast('Elegí una plantilla'); return; }
+  document.getElementById('sesNames').value=t.items.join('\n');
+  document.getElementById('tplHint').textContent=`${t.items.length} mediciones cargadas — editá la lista si querés y tocá Iniciar.`;
 }
 function confirmSession(){
   fetch('/api/session/confirm',{method:'POST'}).then(r=>{ if(!r.ok) toast('Faltan mediciones'); });
@@ -667,7 +689,7 @@ function saveCfg(ev){
 const _renderSession=renderSession;
 renderSession=function(){ _renderSession(); renderSesChip(); };
 
-connect(); loadCaps(); loadCfg(); loadSession();
+connect(); loadCaps(); loadCfg(); loadSession(); loadTemplates();
 </script>
 </body>
 </html>)rawliteral";

@@ -110,6 +110,32 @@ def nueva_medicion(etiquetas: list[str]) -> dict:
 
 
 @mcp.tool()
+def listar_plantillas() -> list:
+    """Lista las plantillas de medicion disponibles para disenar cajitas de
+    dispositivos IoT/Arduino. Cada una trae una lista de mediciones pensadas
+    para ser faciles de tomar con el calibre (medir bordes, no centros).
+    Devuelve [{id, name, items:[...]}]. Usar iniciar_plantilla(id) para
+    arrancar una sesion con esa lista."""
+    r = _get("/api/templates")
+    r.raise_for_status()
+    return r.json()
+
+
+@mcp.tool()
+def iniciar_plantilla(template_id: str) -> dict:
+    """Inicia una SESION DE MEDICION GUIADA desde una plantilla (ver
+    listar_plantillas para los id disponibles, p.ej. 'devboard', 'display',
+    'sensor', 'panel', 'simple'). La tabla aparece en la web del calibre y el
+    usuario la completa con el boton. Luego usar esperar_mediciones() para
+    recibir los valores confirmados."""
+    r = httpx.post(f"{BASE_URL}/api/session/template",
+                   json={"id": template_id}, timeout=5.0)
+    if r.status_code != 200:
+        return {"ok": False, "error": f"plantilla '{template_id}' desconocida"}
+    return {"ok": True, "hint": "lista visible en la web; llamar esperar_mediciones"}
+
+
+@mcp.tool()
 def esperar_mediciones(timeout_s: float = 25.0) -> dict:
     """Espera a que el usuario complete TODAS las mediciones de la sesion
     (creada con nueva_medicion) y las CONFIRME en la web. Devuelve

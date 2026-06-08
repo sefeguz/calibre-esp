@@ -46,6 +46,12 @@ src/main.cpp        orquestación; ÚNICO lugar donde corren las acciones que
 src/session.*       sesión de medición guiada (lista nombrada que se completa
                     con el botón; select para repetir; confirm → MCP la
                     retira). Estado en RAM con mux propio; máx 24 ítems
+src/templates.h     plantillas de medición para cajitas IoT (5: simple,
+                    devboard, display, sensor, panel). Datos const en flash;
+                    GET /api/templates lista, POST /api/session/template
+                    {id} inicia. Filosofía "medir bordes, derivar centros":
+                    los ítems piden "borde a centro", "separacion (centros)",
+                    stack Z (alto sobre/bajo PCB) — ver help_text.h/llms.txt
 src/caliper.{h,cpp} lector dual-modo + decode + filtros anti-glitch
 src/ble_keyboard.*  teclado HID BLE propio sobre NimBLE 2.x (T-vK está roto en C3)
 src/webserver.*     ESPAsyncWebServer: UI PROGMEM, /ws, /api/*, OTA /update,
