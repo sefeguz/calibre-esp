@@ -160,15 +160,21 @@ $env:PYTHONUTF8 = "1"
   - El **SoftAP queda SIEMPRE prendido** (AP_STA); nunca `softAPdisconnect`.
     Al conectar la STA solo se baja el portal cautivo (`captivePortalOff`).
     Así el hotspot no "desaparece" y el equipo es alcanzable por AP+LAN.
-  - El roaming SÍ corre aunque haya cliente en el AP (el AP nunca se apaga,
-    solo hay un parpadeo de canal al conectar). NO bloquear por `apBusy`:
-    un celular pegado al hotspot impediría que el equipo se conecte a la red
-    recién configurada (bug v1.5.1, corregido en v1.5.2). El bug original de
-    "el hotspot se desconecta a los 30s" lo arregla el AP-siempre-prendido.
-  - Guardar config con redes nuevas → reconexión inmediata: el handler
-    setea `wifiReapplyPending` y `wifiTick` suelta la STA y re-evalúa DESPUÉS
-    de ~1.2 s (NO en el handler: `WiFi.disconnect()` ahí corta la respuesta
-    HTTP en curso y el cliente recibe un error).
+  - **NO escanear ni conectar la STA mientras hay cliente en el hotspot**
+    (`apBusy`, v1.7.2): con una sola radio, escanear/conectar salta de canal
+    y le corta el hotspot al usuario que está configurando (bug reportado:
+    "guardo y el hotspot muere hasta powercycle"). Historial del vaivén:
+    v1.5.1 tenía la guarda → v1.5.2 la sacó (para que un celu pegado no
+    bloqueara) → v1.7.2 la repuso porque cortar la config es peor; el caso
+    "celu pegado" se resuelve con el reapply diferido (abajo).
+  - **Escaneo al arrancar** (`bootScan`): el primer scan corre sí o sí (antes
+    de que haya cliente) y puebla `scanCacheJson`. La UI "Buscar redes"
+    devuelve esa caché cuando hay alguien en el hotspot (nunca escanea en vivo
+    por el AP). Idea del usuario: "escanea al inicio, después elijo de memoria".
+  - Guardar config con redes nuevas → `wifiReapplyPending`. `wifiTick` lo
+    aplica (suelta STA + re-escanea + conecta) SOLO cuando `!apBusy` — o sea
+    cuando el usuario se desconecta del hotspot (o reinicia). Nunca en el
+    handler (`WiFi.disconnect()` ahí corta la respuesta HTTP).
   - **Escaneo de UI** (`/api/wifi/scan` → `uiScanPending`) separado del de
     roaming: solo cachea, NUNCA conecta. Un scan estando conectado tira la
     STA ~2 s; se recupera con `WiFi.reconnect()` inmediato + nudge cada 5 s

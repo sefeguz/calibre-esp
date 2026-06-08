@@ -718,7 +718,7 @@ function saveCfg(ev){
               eol:+f.eol.value,ble:f.ble.value==='1',rmode:+f.rmode.value,inv:f.inv.value==='1'};
   cfgSep=f.sep.value;
   fetch('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
-    .then(r=>r.ok?toast('Guardado. Reiniciá para aplicar los cambios de WiFi/BLE.')
+    .then(r=>r.ok?toast('Guardado ✓ Se conecta al salir del hotspot o al reiniciar.')
                  :toast('Error al guardar'));
 }
 

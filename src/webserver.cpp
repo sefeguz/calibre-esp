@@ -65,6 +65,7 @@ static bool     scanForUi = false;       // el escaneo en curso es solo para la 
 static bool     uiScanPending = false;   // la UI pidió un escaneo
 static bool     uiScanWasConnected = false;  // había STA antes del escaneo de UI
 static bool     wifiReapplyPending = false;  // releer redes y reconectar (tras guardar)
+static bool     bootScan = true;             // primer escaneo del arranque (puebla cache)
 // caché del último escaneo (para el selector de redes de la UI)
 static String   scanCacheJson;
 static uint32_t scanCacheMs = 0;
@@ -205,6 +206,7 @@ static void wifiBegin()
 
     wifiState = WifiState::IDLE;
     wifiNextScanMs = millis();      // escanear ya mismo
+    bootScan = true;                // primer escaneo: corre si o si (puebla cache)
 }
 
 static void wifiTick()
@@ -214,21 +216,18 @@ static void wifiTick()
     bool apBusy = WiFi.softAPgetStationNum() > 0;   // alguien usando el hotspot
 
     // Reaplicar redes tras un guardado: soltar la STA y re-evaluar para
-    // conectar a la mejor guardada (la respuesta HTTP ya se envió, así que
-    // ahora es seguro cortar la STA). Se da ~1.2 s para que el cliente reciba.
-    if (wifiReapplyPending) {
-        static uint32_t reapplyAt = 0;
-        if (reapplyAt == 0) { reapplyAt = now + 1200; }
-        else if (now >= reapplyAt) {
-            reapplyAt = 0;
-            wifiReapplyPending = false;
-            if (staUp) WiFi.disconnect();
-            wifiNextScanMs = now;
-            wifiState = WifiState::IDLE;
-            return;
-        }
+    // conectar a la mejor guardada. PERO solo cuando NO hay nadie en el
+    // hotspot — si el usuario está configurando por el AP, reconectar la STA
+    // salta de canal y le corta el hotspot. Se difiere hasta que se
+    // desconecta del hotspot (o reinicia). La respuesta HTTP ya salió.
+    if (wifiReapplyPending && !apBusy && wifiState != WifiState::SCANNING &&
+        wifiState != WifiState::CONNECTING) {
+        wifiReapplyPending = false;
+        if (staUp) WiFi.disconnect();
+        wifiNextScanMs = now;
+        wifiState = WifiState::IDLE;
+        return;
     }
-    (void)apBusy;
 
     // Escaneo de UI pendiente: lanzable desde IDLE o CONNECTED (no a mitad de
     // un escaneo/conexión). Solo cachea resultados, NUNCA conecta. Un escaneo
@@ -246,14 +245,19 @@ static void wifiTick()
 
     switch (wifiState) {
         case WifiState::IDLE: {
-            // Escaneo de roaming: solo si el AP está libre y aún no conectados.
-            // Roamear (escanear + conectar a la guardada con mejor señal) aun
-            // si hay un cliente en el hotspot: como el AP nunca se apaga, lo
-            // peor es un parpadeo del AP al cambiar de canal — NO bloquearlo,
-            // si no un celular pegado al hotspot impediría que el equipo se
-            // conecte a la red que el usuario acaba de configurar.
-            bool roam = settings.wifiCount > 0 && !staUp && now >= wifiNextScanMs;
+            // Escaneo de arranque: corre una vez, sí o sí, antes de que haya
+            // cliente en el hotspot — puebla la cache de redes para el selector
+            // (el usuario después elige de ahí sin que un escaneo en vivo le
+            // corte el hotspot) y conecta a la mejor guardada si la encuentra.
+            //
+            // Después: roamear (escanear/conectar) SOLO si el hotspot está libre.
+            // Si hay alguien configurando por el AP, no tocar la radio — saltar
+            // de canal le cortaría el hotspot. La conexión a la red guardada se
+            // hace cuando el usuario se desconecta del hotspot (apBusy=false).
+            bool roam = !staUp && now >= wifiNextScanMs &&
+                        (bootScan || (settings.wifiCount > 0 && !apBusy));
             if (roam) {
+                bootScan = false;
                 scanForUi = false;
                 WiFi.scanNetworks(true);
                 wifiState = WifiState::SCANNING;
@@ -309,11 +313,13 @@ static void wifiTick()
                     wifiState = staUp ? WifiState::CONNECTED : WifiState::IDLE;
                     wifiNextScanMs = now + 30000;
                 }
-            } else if (wifiCandCount > 0) {
+            } else if (wifiCandCount > 0 && !apBusy) {
                 wifiCandIdx = 0;
                 wifiTryCandidate();             // conectar (AP sigue prendido)
             } else {
-                wifiNextScanMs = now + 30000;   // nada conocido: reintentar
+                // sin candidatas, o hay alguien en el hotspot (no conectar para
+                // no cortarle el canal): reintentar mas tarde
+                wifiNextScanMs = now + 30000;
                 wifiState = WifiState::IDLE;
             }
             break;
@@ -658,13 +664,20 @@ static void setupRoutes()
     // fresca; si no, dispara un escaneo (compartido con la máquina de estados
     // cuando está en modo AP) y el cliente repite hasta tener resultados.
     server.on("/api/wifi/scan", HTTP_GET, [](AsyncWebServerRequest* req) {
-        // caché fresca: devolverla (no re-escanear, no molestar al AP)
+        bool apBusy = WiFi.softAPgetStationNum() > 0;
+        // Con alguien en el hotspot (configurando por el AP), NUNCA escanear
+        // en vivo: el escaneo salta de canal y le corta el hotspot. Se
+        // devuelve la cache del escaneo del arranque. Tambien si es reciente.
+        if (apBusy) {
+            req->send(200, "application/json",
+                      scanCacheJson.length() ? scanCacheJson : "{\"networks\":[]}");
+            return;
+        }
         if (scanCacheMs && millis() - scanCacheMs < 15000) {
             req->send(200, "application/json", scanCacheJson);
             return;
         }
-        // pedir un escaneo de UI: el ciclo lo hace y SOLO cachea (no conecta,
-        // no tira el AP). Funciona igual en modo hotspot o conectado.
+        // sin cliente en el AP: escaneo de UI en vivo (solo cachea, no conecta)
         uiScanPending = true;
         req->send(200, "application/json", "{\"scanning\":true}");
     });

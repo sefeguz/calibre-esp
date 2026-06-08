@@ -2,7 +2,7 @@
 // Tarjeta objetivo: ESP32-C3 (SuperMini / DevKitM-1)
 #pragma once
 
-#define FIRMWARE_VERSION "1.7.1"
+#define FIRMWARE_VERSION "1.7.2"
 #define DEVICE_NAME_DEFAULT "Calibre-ESP"
 
 // ---------------------------------------------------------------------------
