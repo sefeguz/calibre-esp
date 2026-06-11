@@ -5,6 +5,7 @@
 #include "session.h"
 #include "templates.h"
 #include "ble_keyboard.h"
+#include "battery.h"
 #include "web_ui.h"
 #include "help_text.h"
 
@@ -397,6 +398,10 @@ static void buildStatusJson(JsonDocument& doc)
     doc["apOn"] = true;               // el SoftAP siempre está prendido
     doc["apClients"] = WiFi.softAPgetStationNum();
     doc["rssi"] = WiFi.RSSI();
+    if (batteryAvailable()) {
+        doc["battMv"] = batteryMilliVolts();
+        doc["battPct"] = batteryPercent();
+    }
     doc["heap"] = ESP.getFreeHeap();
     doc["minHeap"] = ESP.getMinFreeHeap();
     doc["uptime"] = millis() / 1000;

@@ -178,11 +178,23 @@ void setup()
     delay(100);
     Serial.printf("\nCalibre-ESP v%s\n", FIRMWARE_VERSION);
 
+#ifdef BOARD_XIAO_C6
+    // XIAO C6: seleccionar la antena integrada (GPIO14=LOW) y habilitar el
+    // switch RF (GPIO3=LOW). Sin esto el WiFi/BLE puede tener poco alcance.
+    pinMode(PIN_RF_SWITCH_EN, OUTPUT);
+    digitalWrite(PIN_RF_SWITCH_EN, LOW);
+    pinMode(PIN_ANT_SELECT, OUTPUT);
+    digitalWrite(PIN_ANT_SELECT, LOW);
+    Serial.println("[board] XIAO ESP32-C6, antena integrada");
+#endif
+
     pinMode(PIN_LED, OUTPUT);
     ledWrite(false);
 
     settings.load();
+#if PIN_BUTTON >= 0
     button.begin(PIN_BUTTON);
+#endif
 
     // lector del calibre (auto-detección o modo forzado por configuración)
     CaliperMode mode = settings.readMode == 1 ? CaliperMode::DIGITAL
@@ -272,7 +284,9 @@ void loop()
         }
     }
 
-    // botón físico
+    // botón físico (si la placa lo tiene; en la C6 sin botón la captura es
+    // por web/MCP)
+#if PIN_BUTTON >= 0
     switch (button.poll()) {
         case ButtonEvent::SHORT_PRESS:
             captureAction();
@@ -285,6 +299,7 @@ void loop()
         default:
             break;
     }
+#endif
 
     // estado periódico a los clientes web (BLE conectado, modo, on/off)
     static uint32_t lastStatus = 0;

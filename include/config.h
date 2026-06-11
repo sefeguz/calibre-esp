@@ -1,23 +1,51 @@
 // Calibre-ESP — configuración de hardware y constantes
-// Tarjeta objetivo: ESP32-C3 (SuperMini / DevKitM-1)
+// Tarjetas objetivo: ESP32-C3 (SuperMini / DevKitM-1) y XIAO ESP32-C6 (batería)
 #pragma once
 
-#define FIRMWARE_VERSION "1.7.2"
+#define FIRMWARE_VERSION "1.8.0"
 #define DEVICE_NAME_DEFAULT "Calibre-ESP"
 
 // ---------------------------------------------------------------------------
-// Pines (ESP32-C3)
-// DATA/CLK van en GPIO0/GPIO1 a propósito: son canales de ADC1, necesarios
-// para el modo fallback ADC (señales de 1.5 V). No usar pull-ups internos:
-// el calibre se alimenta de su propia pila CR2032 (3 V) y solo comparte GND.
+// Pines — selección por placa.
+// CLK/DATA del calibre van en GPIO0/GPIO1: son canales de ADC1, necesarios
+// para el modo fallback ADC (señales de 1.5 V). No usar pull-ups internos: el
+// calibre corre de su propia pila y solo comparte GND.
 // ---------------------------------------------------------------------------
-#define PIN_CALIPER_DATA 1   // ADC1_CH1 (cableado real de esta unidad)
-#define PIN_CALIPER_CLK  0   // ADC1_CH0
-#define PIN_BUTTON       9   // botón BOOT onboard de la SuperMini (a GND).
-                             // Es strapping pin pero solo se muestrea en el
-                             // reset; en runtime es un botón normal.
-#define PIN_LED          8   // LED onboard (C3 SuperMini: lógica invertida)
-#define LED_INVERTED     true
+#if defined(ARDUINO_XIAO_ESP32C6)
+  // --- XIAO ESP32-C6 (versión a batería) ---
+  // En la XIAO C6 solo D0/D1/D2 (GPIO0/1/2) son ADC1. Sin botón físico (la
+  // captura es por web/MCP), GPIO2 queda libre para el divisor de batería.
+  // LED en GPIO15 (activo bajo). EVITAR GPIO3/GPIO14 (control de antena RF).
+  #define BOARD_XIAO_C6    1
+  #define PIN_CALIPER_CLK  0   // D0 / ADC1_CH0
+  #define PIN_CALIPER_DATA 1   // D1 / ADC1_CH1
+  #define PIN_BUTTON       9   // botón BOOT onboard (captura; futuro wake del
+                               // light sleep — GPIO9 despierta del light sleep)
+  #define PIN_LED          15  // LED onboard (activo bajo)
+  #define LED_INVERTED     true
+  #define BATT_ADC_PIN     -1  // sin medición de batería por ahora (GPIO2 libre)
+  // Antena: GPIO14=LOW (interna) y GPIO3=LOW (enable del switch RF)
+  #define PIN_RF_SWITCH_EN 3
+  #define PIN_ANT_SELECT   14
+#else
+  // --- ESP32-C3 SuperMini / DevKitM-1 (versión de banco, USB) ---
+  #define PIN_CALIPER_DATA 1   // ADC1_CH1 (cableado real de la unidad SuperMini)
+  #define PIN_CALIPER_CLK  0   // ADC1_CH0
+  #define PIN_BUTTON       9   // botón BOOT onboard (strapping, solo al reset)
+  #define PIN_LED          8   // LED onboard (lógica invertida)
+  #define LED_INVERTED     true
+  #define BATT_ADC_PIN     -1  // sin medición de batería (corre por USB)
+#endif
+
+// ---------------------------------------------------------------------------
+// Batería (LiPo en placas con divisor a un pin ADC, p.ej. XIAO C6). La C6 NO
+// trae divisor de fábrica: se agregan 2x200k de BAT+ a BATT_ADC_PIN y se lee
+// con analogReadMilliVolts × BATT_DIVIDER. Hasta soldar el divisor+batería,
+// el % muestra valores sin sentido (pin flotante) — es esperado.
+// ---------------------------------------------------------------------------
+#define BATT_DIVIDER      2.0f  // ratio del divisor (2x200k = 1:2)
+#define BATT_FULL_MV      4200  // 100%
+#define BATT_EMPTY_MV     3300  // 0% (corte seguro)
 
 // ---------------------------------------------------------------------------
 // Protocolo del calibre (24 bits, LSB primero)
