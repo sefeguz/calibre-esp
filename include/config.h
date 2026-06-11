@@ -30,6 +30,9 @@
   // Versión a batería: WiFi APAGADO por defecto (ahorro). Se enciende
   // manteniendo BOOT 2 s; el LED queda fijo cuando el WiFi está prendido.
   #define WIFI_OFF_BY_DEFAULT 1
+  // Auto-apagado del WiFi tras inactividad (nadie en la web/hotspot ni
+  // requests). Mantenerlo prendido = tener la página abierta.
+  #define WIFI_IDLE_MS  120000   // 2 min sin uso -> WiFi off (vuelve a BLE)
 #else
   // --- ESP32-C3 SuperMini / DevKitM-1 (versión de banco, USB) ---
   #define PIN_CALIPER_DATA 1   // ADC1_CH1 (cableado real de la unidad SuperMini)

@@ -24,9 +24,13 @@ static DNSServer dnsServer;
 static bool apMode = false;
 static bool wifiEnabled = false;   // WiFi (radio + servidor) encendido
 static bool serverStarted = false;
+static uint32_t wifiActivityMs = 0;  // última actividad de red (auto-apagado)
 
 bool webserverInApMode() { return apMode; }
 bool webserverWifiEnabled() { return wifiEnabled; }
+
+// Resetea el timer de inactividad del WiFi (llamar en cada request/uso).
+void webserverNoteActivity() { wifiActivityMs = millis(); }
 
 // Resumen del estado WiFi para diagnóstico (comando serial `status`).
 // El ESP32 en AP_STA tiene DOS IPs activas a la vez: la del hotspot
@@ -44,8 +48,13 @@ String webserverWifiInfo()
         s += "desconectada";
     }
     s += " | AP='" AP_SSID "' " + WiFi.softAPIP().toString() +
-         " clientes=" + String(WiFi.softAPgetStationNum());
+         " apClientes=" + String(WiFi.softAPgetStationNum()) +
+         " ws=" + String(ws.count());
     s += apMode ? " [portal cautivo ON]" : " [portal OFF]";
+#ifdef WIFI_IDLE_MS
+    uint32_t idle = millis() - wifiActivityMs;
+    s += " | idle=" + String(idle / 1000) + "s/" + String(WIFI_IDLE_MS / 1000) + "s";
+#endif
     s += " | heap=" + String(ESP.getFreeHeap());
     return s;
 }
@@ -442,6 +451,7 @@ static void setupRoutes()
 
     // --- API ---
     server.on("/api/value", HTTP_GET, [](AsyncWebServerRequest* req) {
+        wifiActivityMs = millis();   // request REST cuenta como actividad
         JsonDocument doc;
         CaliperReading r = caliper.lastAtomic();   // un solo snapshot consistente
         doc["mm"] = serialized(String(appDisplayedMmFrom(r), 3));
@@ -456,6 +466,7 @@ static void setupRoutes()
     });
 
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest* req) {
+        wifiActivityMs = millis();
         JsonDocument doc;
         buildStatusJson(doc);
         String out;
@@ -565,6 +576,7 @@ static void setupRoutes()
 
     // --- sesión de medición guiada ---
     server.on("/api/session", HTTP_GET, [](AsyncWebServerRequest* req) {
+        wifiActivityMs = millis();
         JsonDocument doc;
         doc["active"] = Session::isActive();
         if (Session::isActive()) {
@@ -902,6 +914,7 @@ void webserverSetWifi(bool on)
         wifiBegin();                 // inicializa netif + AP/STA + escaneo
         server.begin();              // ahora sí, con el stack de red arriba
         serverStarted = true;
+        wifiActivityMs = millis();   // arranca el timer de inactividad
     } else {
         Serial.println("[wifi] apagando (solo BLE)");
         if (serverStarted) { server.end(); serverStarted = false; }
@@ -936,6 +949,19 @@ void webserverLoop()
     if (!wifiEnabled) return;        // WiFi off: nada de red (solo BLE)
     wifiTick();
     if (apMode) dnsServer.processNextRequest();
+
+#ifdef WIFI_IDLE_MS
+    // Auto-apagado del WiFi: mientras haya alguien en la web (WS) o en el
+    // hotspot, sigue prendido; cuando no hay nadie ni requests por
+    // WIFI_IDLE_MS, se apaga solo (ahorro de batería).
+    if (ws.count() > 0 || WiFi.softAPgetStationNum() > 0) {
+        wifiActivityMs = millis();
+    } else if (millis() - wifiActivityMs > WIFI_IDLE_MS) {
+        Serial.println("[wifi] sin uso, apagando (auto)");
+        webserverSetWifi(false);
+        return;
+    }
+#endif
     // Limitar el pool de WebSockets a 4: si el navegador reconecta varias
     // veces (p.ej. tras un firmware update mientras la página está abierta),
     // las conexiones duplicadas se acumulaban y saturaban los sockets del

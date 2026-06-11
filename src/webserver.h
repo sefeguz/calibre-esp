@@ -10,6 +10,7 @@ void webserverLoop();                       // DNS del portal cautivo + limpieza
 bool webserverInApMode();
 void webserverSetWifi(bool on);             // prender/apagar WiFi en runtime
 bool webserverWifiEnabled();
+void webserverNoteActivity();               // resetea el timer de auto-apagado
 String webserverWifiInfo();                 // resumen STA/AP para diagnóstico serial
 
 void wsBroadcastReading(const CaliperReading& r, float displayedMm, bool relActive);
