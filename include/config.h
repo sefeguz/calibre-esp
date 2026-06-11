@@ -2,7 +2,7 @@
 // Tarjetas objetivo: ESP32-C3 (SuperMini / DevKitM-1) y XIAO ESP32-C6 (batería)
 #pragma once
 
-#define FIRMWARE_VERSION "1.8.0"
+#define FIRMWARE_VERSION "1.8.1"
 #define DEVICE_NAME_DEFAULT "Calibre-ESP"
 
 // ---------------------------------------------------------------------------
@@ -27,6 +27,9 @@
   // Antena: GPIO14=LOW (interna) y GPIO3=LOW (enable del switch RF)
   #define PIN_RF_SWITCH_EN 3
   #define PIN_ANT_SELECT   14
+  // Versión a batería: WiFi APAGADO por defecto (ahorro). Se enciende
+  // manteniendo BOOT 2 s; el LED queda fijo cuando el WiFi está prendido.
+  #define WIFI_OFF_BY_DEFAULT 1
 #else
   // --- ESP32-C3 SuperMini / DevKitM-1 (versión de banco, USB) ---
   #define PIN_CALIPER_DATA 1   // ADC1_CH1 (cableado real de la unidad SuperMini)
@@ -89,4 +92,4 @@
 // Botón
 // ---------------------------------------------------------------------------
 #define BUTTON_DEBOUNCE_MS   30
-#define BUTTON_LONGPRESS_MS  1500
+#define BUTTON_LONGPRESS_MS  2000   // mantener 2 s: WiFi on/off (C6) o zero (C3)

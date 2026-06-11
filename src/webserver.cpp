@@ -22,14 +22,20 @@ static AsyncWebServer server(80);
 static AsyncWebSocket ws("/ws");
 static DNSServer dnsServer;
 static bool apMode = false;
+static bool wifiEnabled = false;   // WiFi (radio + servidor) encendido
+static bool serverStarted = false;
 
 bool webserverInApMode() { return apMode; }
+bool webserverWifiEnabled() { return wifiEnabled; }
 
 // Resumen del estado WiFi para diagnóstico (comando serial `status`).
 // El ESP32 en AP_STA tiene DOS IPs activas a la vez: la del hotspot
 // (siempre, 192.168.4.1) y la de tu red si la STA está conectada.
 String webserverWifiInfo()
 {
+    if (!wifiEnabled) {
+        return "OFF (solo BLE) | heap=" + String(ESP.getFreeHeap());
+    }
     String s = "STA=";
     if (WiFi.status() == WL_CONNECTED) {
         s += "'" + WiFi.SSID() + "' " + WiFi.localIP().toString() +
@@ -883,18 +889,51 @@ void wsBroadcastStatus()
 
 // ---------------------------------------------------------------------------
 
+// Enciende/apaga el WiFi en runtime. CLAVE: el servidor (AsyncTCP) necesita el
+// stack de red, que recién se inicializa con wifiBegin(); por eso server.begin()
+// va DESPUÉS de wifiBegin, y server.end() al apagar (sin el netif, server.begin
+// crashea con assert de cola). BLE no se toca, sigue siempre.
+void webserverSetWifi(bool on)
+{
+    if (on == wifiEnabled) return;
+    wifiEnabled = on;
+    if (on) {
+        Serial.println("[wifi] encendiendo (AP + STA)");
+        wifiBegin();                 // inicializa netif + AP/STA + escaneo
+        server.begin();              // ahora sí, con el stack de red arriba
+        serverStarted = true;
+    } else {
+        Serial.println("[wifi] apagando (solo BLE)");
+        if (serverStarted) { server.end(); serverStarted = false; }
+        dnsServer.stop();
+        apMode = false;
+        WiFi.disconnect(true);
+        WiFi.softAPdisconnect(true);
+        WiFi.mode(WIFI_OFF);
+    }
+}
+
 void webserverBegin()
 {
-    wifiBegin();
+    // Registrar rutas y el WebSocket una sola vez (no necesita red). El
+    // server.begin() y el WiFi se hacen en webserverSetWifi(true).
     ws.onEvent(onWsEvent);
     server.addHandler(&ws);
     setupRoutes();
-    server.begin();
-    Serial.println("[web] servidor iniciado en puerto 80");
+    Serial.println("[web] rutas registradas");
+
+#ifdef WIFI_OFF_BY_DEFAULT
+    // batería: WiFi (y servidor) apagados al arrancar; se prenden con BOOT 2 s
+    wifiEnabled = false;
+    Serial.println("[wifi] apagado por defecto (mantener BOOT 2 s para prender)");
+#else
+    webserverSetWifi(true);          // banco/USB: WiFi + servidor al arrancar
+#endif
 }
 
 void webserverLoop()
 {
+    if (!wifiEnabled) return;        // WiFi off: nada de red (solo BLE)
     wifiTick();
     if (apMode) dnsServer.processNextRequest();
     // Limitar el pool de WebSockets a 4: si el navegador reconecta varias

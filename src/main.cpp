@@ -46,12 +46,17 @@ static void ledLoop()
         ledWrite((now / 60) % 2);
         return;
     }
-    if (webserverInApMode()) {               // modo AP: rápido
-        ledWrite((now / 150) % 2);
+    if (webserverWifiEnabled()) {
+        if (webserverInApMode()) {           // configurando (hotspot): parpadeo rápido
+            ledWrite((now / 150) % 2);
+        } else {                             // WiFi conectado: LED FIJO
+            ledWrite(true);
+        }
         return;
     }
+    // WiFi apagado (solo BLE): latido corto = "encendido"
     uint32_t period = caliper.isOn() ? 1000 : 2500;
-    ledWrite((now % period) < 60);           // latido corto
+    ledWrite((now % period) < 60);
 }
 
 // ---------------------------------------------------------------------------
@@ -84,6 +89,9 @@ static void serialLoop()
         Serial.println(webserverWifiInfo());
     }
     else if (cmd == "reboot") { Serial.println("[ok] reiniciando..."); delay(100); ESP.restart(); }
+    else if (cmd == "wifi on")  { webserverSetWifi(true);  Serial.println("[ok] wifi on"); }
+    else if (cmd == "wifi off") { webserverSetWifi(false); Serial.println("[ok] wifi off"); }
+    else if (cmd == "wifi") { Serial.printf("[wifi] %s\n", webserverWifiEnabled() ? "on" : "off"); }
     else if (cmd == "capture") { captureAction(); }
     else if (cmd == "zero") { appToggleRelative(); wsBroadcastStatus(); }
     else if (cmd.startsWith("sim ")) {
@@ -292,9 +300,16 @@ void loop()
             captureAction();
             break;
         case ButtonEvent::LONG_PRESS:
+#ifdef WIFI_OFF_BY_DEFAULT
+            // C6 (batería): mantener BOOT 2 s prende/apaga el WiFi
+            webserverSetWifi(!webserverWifiEnabled());
+            ledFlashCapture();
+#else
+            // C3 (banco): mantener 2 s = zero relativo
             appToggleRelative();
             wsBroadcastStatus();
             ledFlashCapture();
+#endif
             break;
         default:
             break;
